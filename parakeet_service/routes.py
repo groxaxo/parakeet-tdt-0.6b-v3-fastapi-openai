@@ -21,6 +21,10 @@ from parakeet_service.chunker import vad_chunk_lowmem, vad_chunk_streaming
 
 router = APIRouter(tags=["speech"])
 
+# Delimiter for separating SRT content and word-level timestamps
+# Used when model="parakeet_srt_words" to append word timestamps after SRT content
+WORD_TIMESTAMP_DELIMITER = "----..----"
+
 
 def format_srt_time(seconds: float) -> str:
     """Convert seconds to SRT timestamp format HH:MM:SS,ms"""
@@ -254,7 +258,7 @@ async def transcribe_audio(
                 {"start": it['start'], "end": it['end'], "word": it.get('word', it.get('text', ''))} 
                 for it in words
             ]
-            srt_result += "----..----" + json.dumps(json_str_list)
+            srt_result += WORD_TIMESTAMP_DELIMITER + json.dumps(json_str_list)
         
         return Response(srt_result, media_type='text/plain')
     

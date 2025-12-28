@@ -13,6 +13,12 @@ from parakeet_service.batchworker import batch_worker
 # Cache for loaded models
 _loaded_models = {}
 
+# Language to model mapping
+LANGUAGE_MODEL_MAP = {
+    "ja": "ja",  # Japanese uses special model
+    # All other languages use the default model
+}
+
 
 def _to_builtin(obj):
     """torch/NumPy → pure-Python (JSON-safe)."""
@@ -30,11 +36,8 @@ def _to_builtin(obj):
 
 def load_model_for_language(language: str = "default"):
     """Load and cache model for a specific language."""
-    # Map language code to model
-    if language == "ja":
-        model_key = "ja"
-    else:
-        model_key = "default"
+    # Map language code to model using the mapping
+    model_key = LANGUAGE_MODEL_MAP.get(language, "default")
     
     # Return cached model if already loaded
     if model_key in _loaded_models:
