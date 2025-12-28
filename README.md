@@ -1,11 +1,25 @@
-# Parakeet-TDT 0.6B v2 FastAPI STT Service
+# Parakeet-TDT 0.6B v3 FastAPI STT Service
 
-A production-ready FastAPI service for high-accuracy English speech-to-text using NVIDIA's Parakeet-TDT 0.6B v2 model. Implements both REST and WebSocket endpoints following the [OpenAI Audio API specification](https://platform.openai.com/docs/api-reference/audio) interface.
+A production-ready FastAPI service for high-accuracy speech-to-text using NVIDIA's Parakeet-TDT models. Implements both REST and WebSocket endpoints following the [OpenAI Audio API specification](https://platform.openai.com/docs/api-reference/audio) interface.
+
+**Based on the excellent work by [jianchang512/parakeet-api](https://github.com/jianchang512/parakeet-api) - Thank you!**
 
 ## Features
 
+- **Multi-language support**
+  - English, Japanese, and 24+ European languages
+  - Automatic model selection based on language
+  - Uses nvidia/parakeet-tdt-0.6b-v3 (default) and nvidia/parakeet-tdt_ctc-0.6b-ja (Japanese)
+
+- **Web UI**
+  - Simple and intuitive web interface
+  - Drag-and-drop file upload
+  - Language selection dropdown
+  - Direct SRT subtitle download
+
 - **RESTful transcription**  
-  - `POST /transcribe` with multipart audio uploads
+  - `POST /v1/audio/transcriptions` with multipart audio uploads
+  - SRT and JSON response formats
   - Word/character/segment timestamps
   - OpenAI-compatible response schema
 
@@ -107,6 +121,15 @@ docker-compose up --build -d
 
 ## Usage
 
+### Web Interface
+
+1. Start the server (see [Running the Server](#running-the-server))
+2. Open your browser to [http://localhost:8000](http://localhost:8000)
+3. Select the language from the dropdown
+4. Upload your audio/video file
+5. Click "Start Transcription"
+6. Download the generated SRT file
+
 ### REST API
 
 #### Health Check
@@ -117,17 +140,33 @@ curl http://localhost:8000/healthz
 
 #### Transcription
 ```bash
-curl -X POST http://localhost:8000/transcribe \
+# Get SRT format (default for web UI compatibility)
+curl -X POST http://localhost:8000/v1/audio/transcriptions \
   -F file="@audio.wav" \
-  -F include_timestamps=true \
-  -F should_chunk=true
+  -F prompt="en" \
+  -F response_format="srt"
+
+# Get JSON format with timestamps
+curl -X POST http://localhost:8000/v1/audio/transcriptions \
+  -F file="@audio.wav" \
+  -F prompt="en" \
+  -F include_timestamps=true
+
+# Get SRT with word-level timestamps appended
+curl -X POST http://localhost:8000/v1/audio/transcriptions \
+  -F file="@audio.wav" \
+  -F prompt="en" \
+  -F model="parakeet_srt_words"
 ```
 
 **Parameters**:
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `file` | `audio/*` | Required | Audio file (wav, mp3, flac) |
-| `include_timestamps` | bool | false | Return word/segment timestamps |
+| `prompt` | string | "en" | Language code (en, ja, etc.) |
+| `response_format` | string | "json" | Response format: "json" or "srt" |
+| `model` | string | "parakeet" | "parakeet" or "parakeet_srt_words" for word timestamps |
+| `include_timestamps` | bool | false | Return word/segment timestamps (JSON only) |
 | `should_chunk` | bool | true | Enable audio chunking for long files |
 
 **Response**:

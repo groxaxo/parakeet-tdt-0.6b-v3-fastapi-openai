@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parakeet-TDT Speech Transcription</title>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --background-color: #f8f9fa;
+            --text-color: #333;
+            --card-bg: #ffffff;
+            --border-color: #dee2e6;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            padding: 2rem 2.5rem;
+            box-sizing: border-box;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+        }
+        h1 {
+            color: var(--primary-color);
+            margin: 0;
+        }
+        p {
+            color: var(--secondary-color);
+            margin-top: 0.5rem;
+        }
+        .upload-area {
+            border: 2px dashed var(--primary-color);
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            background-color: #e9f5ff;
+        }
+        .upload-area input[type="file"] {
+            display: none;
+        }
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--primary-color);
+        }
+        #fileName {
+            margin-top: 1rem;
+            font-style: italic;
+            color: var(--secondary-color);
+        }
+        .actions {
+            text-align: center;
+            margin-top: 1.5rem;
+        }
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.8rem 1.6rem;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        button:disabled {
+            background-color: var(--secondary-color);
+            cursor: not-allowed;
+        }
+        #downloadBtn {
+            background-color: var(--success-color);
+            display: none;
+            margin-left: 1rem;
+        }
+        #downloadBtn:hover {
+            background-color: #218838;
+        }
+        .status {
+            margin-top: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-weight: bold;
+            height: 24px; /* Reserve space to prevent jumping */
+        }
+        .status.error { color: var(--error-color); }
+        .status.success { color: var(--success-color); }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border-left-color: var(--primary-color);
+            animation: spin 1s ease infinite;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .result-area {
+            margin-top: 2rem;
+        }
+        textarea {
+            width: 100%;
+            height: 300px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 0.9rem;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+		p.tips{font-size:12px;color:#777}
+		#wrap_upload{display:flex;align-items:center}
+		select {
+			padding: 0.8rem 1.6rem;
+			border-radius: 6px;
+			font-size: 1rem;
+			margin-right: 1rem;
+			border: 1px solid var(--border-color);
+		}
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>NVIDIA Parakeet Speech Transcription</h1>
+        <p>Upload audio/video files to automatically generate SRT subtitles</p>
+		<p>The Parakeet model currently supports English and Japanese</p>
+    </header>
+
+		<div style="flex-grow:1" class="upload-area" id="uploadArea">
+			<input type="file" id="fileInput" accept="audio/*,video/*">
+			<div class="upload-icon">⬆️</div>
+			<div>Click or drag files here to upload</div>
+			<div id="fileName">No file selected</div>
+		</div>
+
+    <div class="actions">
+		<select id="prompt">
+				<option value="en">English</option>
+				<option value="ja">Japanese</option>
+				<option value="bg">Bulgarian</option>
+				<option value="hr">Croatian</option>
+				<option value="cs">Czech</option>
+				<option value="da">Danish</option>
+				<option value="nl">Dutch</option>
+				<option value="et">Estonian</option>
+				<option value="fi">Finnish</option>
+				<option value="fr">French</option>
+				<option value="de">German</option>
+				<option value="el">Greek</option>
+				<option value="hu">Hungarian</option>
+				<option value="it">Italian</option>
+				<option value="lv">Latvian</option>
+				<option value="lt">Lithuanian</option>
+				<option value="mt">Maltese</option>
+				<option value="pl">Polish</option>
+				<option value="pt">Portuguese</option>
+				<option value="ro">Romanian</option>
+				<option value="sk">Slovak</option>
+				<option value="sl">Slovenian</option>
+				<option value="es">Spanish</option>
+				<option value="sv">Swedish</option>
+				<option value="ru">Russian</option>
+				<option value="uk">Ukrainian</option>
+			</select>
+        <button id="uploadBtn" disabled>Start Transcription</button>
+        <button id="downloadBtn">Download SRT File</button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="result-area">
+        <textarea id="resultText" readonly placeholder="Transcription results will appear here..."></textarea>
+    </div>
+	
+	<div style="text-align:center;margin:15px auto;">
+		<a href="https://github.com/jianchang512/parakeet-api" target="_blank">Original project by jianchang512/parakeet-api - Thank you!</a>
+	</div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileName');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const statusDiv = document.getElementById('status');
+        const resultText = document.getElementById('resultText');
+        
+        let spinner = document.createElement('div');
+        spinner.className = 'spinner';
+        
+        // --- Event listeners ---
+        uploadArea.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+
+        // Drag and drop upload
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, preventDefaults, false);
+        });
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, () => uploadArea.classList.add('dragover'), false);
+        });
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, () => uploadArea.classList.remove('dragover'), false);
+        });
+        uploadArea.addEventListener('drop', handleDrop, false);
+        
+        uploadBtn.addEventListener('click', handleUpload);
+        downloadBtn.addEventListener('click', handleDownload);
+
+        // --- Function definitions ---
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                handleFileSelect();
+            }
+        }
+
+        function handleFileSelect() {
+            const file = fileInput.files[0];
+            if (file) {
+                fileNameDisplay.textContent = file.name;
+                uploadBtn.disabled = false;
+            } else {
+                fileNameDisplay.textContent = 'No file selected';
+                uploadBtn.disabled = true;
+            }
+        }
+
+        async function handleUpload() {
+            const file = fileInput.files[0];
+            if (!file) {
+                updateStatus('Please select a file first', 'error');
+                return;
+            }
+
+            // UI reset and loading state
+            setLoadingState(true);
+            resultText.value = '';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('prompt', document.getElementById('prompt').value);
+
+            try {
+                updateStatus('Uploading and processing file, please wait...', 'loading');
+                const response = await fetch('/v1/audio/transcriptions', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const responseText = await response.text();
+
+                if (response.ok) {
+                    resultText.value = responseText;
+                    updateStatus('Transcription successful!', 'success');
+                    downloadBtn.style.display = 'inline-block';
+                } else {
+                    // Try to parse JSON error
+                    try {
+                        const errorJson = JSON.parse(responseText);
+                        updateStatus(`Error: ${errorJson.error || 'Unknown error'}`, 'error');
+                    } catch {
+                        updateStatus(`Server error: ${response.status} ${response.statusText}`, 'error');
+                    }
+                }
+            } catch (error) {
+                console.error('Upload failed:', error);
+                updateStatus('Upload failed, please check network connection or server status.', 'error');
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        function handleDownload() {
+            const srtContent = resultText.value;
+            if (!srtContent) return;
+
+            const blob = new Blob([srtContent], { type: 'application/x-subrip;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            
+            const originalFileName = fileInput.files[0].name;
+            const baseName = originalFileName.substring(0, originalFileName.lastIndexOf('.')) || originalFileName;
+            
+            a.href = url;
+            a.download = `${baseName}.srt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function setLoadingState(isLoading) {
+            uploadBtn.disabled = isLoading;
+            if (isLoading) {
+                statusDiv.innerHTML = '';
+                statusDiv.appendChild(spinner);
+                spinner.style.display = 'block';
+            } else {
+                spinner.style.display = 'none';
+            }
+        }
+        
+        function updateStatus(message, type = 'info') {
+            statusDiv.innerHTML = ''; // Clear, remove spinner
+             if (type === 'loading') {
+                statusDiv.appendChild(spinner);
+                spinner.style.display = 'block';
+            }
+            let textNode = document.createElement('span');
+            textNode.textContent = message;
+            statusDiv.appendChild(textNode);
+
+            statusDiv.className = 'status';
+            if (type === 'error') {
+                statusDiv.classList.add('error');
+            } else if (type === 'success') {
+                statusDiv.classList.add('success');
+            }
+        }
+    });
+</script>
+
+</body>
+</html>

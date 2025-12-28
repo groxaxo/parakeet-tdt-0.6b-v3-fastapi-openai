@@ -2,21 +2,62 @@ from __future__ import annotations
 import asyncio
 import shutil
 import tempfile
+import datetime
+import json
 from pathlib import Path
 from collections import defaultdict
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile, status, Request, Form
+from fastapi.responses import Response
 
 from .audio import ensure_mono_16k, schedule_cleanup
 from .model import _to_builtin
 from .schemas import TranscriptionResponse
-from .config import logger
+from .config import logger, MODEL_NAMES
 
-from parakeet_service.model import reset_fast_path
+from parakeet_service.model import reset_fast_path, load_model_for_language
 from parakeet_service.chunker import vad_chunk_lowmem, vad_chunk_streaming
 
 
 router = APIRouter(tags=["speech"])
+
+
+def format_srt_time(seconds: float) -> str:
+    """Convert seconds to SRT timestamp format HH:MM:SS,ms"""
+    delta = datetime.timedelta(seconds=seconds)
+    # Format as 0:00:05.123000
+    s = str(delta)
+    # Split seconds and microseconds
+    if '.' in s:
+        parts = s.split('.')
+        integer_part = parts[0]
+        fractional_part = parts[1][:3]  # Take first three digits for milliseconds
+    else:
+        integer_part = s
+        fractional_part = "000"
+
+    # Pad hour position
+    if len(integer_part.split(':')) == 2:
+        integer_part = "0:" + integer_part
+    
+    return f"{integer_part},{fractional_part}"
+
+
+def segments_to_srt(segments: list) -> str:
+    """Convert NeMo segment timestamps to SRT format string"""
+    srt_content = []
+    for i, segment in enumerate(segments):
+        start_time = format_srt_time(segment['start'])
+        end_time = format_srt_time(segment['end'])
+        text = segment.get('segment', segment.get('text', '')).strip()
+        
+        if text:  # Only add content if not empty
+            srt_content.append(str(i + 1))
+            srt_content.append(f"{start_time} --> {end_time}")
+            srt_content.append(text)
+            srt_content.append("")  # Empty line separator
+            
+    return "\n".join(srt_content)
 
 
 @router.get("/healthz", summary="Liveness/readiness probe")
@@ -26,13 +67,11 @@ def health():
 
 @router.post(
     "/transcribe",
-    response_model=TranscriptionResponse,
     summary="Transcribe an audio file",
 )
 @router.post(
-    "/audio/transcriptions",
-    response_model=TranscriptionResponse,
-    summary="Transcribe an audio file",
+    "/v1/audio/transcriptions",
+    summary="Transcribe an audio file (OpenAI compatible)",
 )
 async def transcribe_audio(
     request: Request,
@@ -44,6 +83,9 @@ async def transcribe_audio(
     should_chunk: bool = Form(True,
         description="If true (default), split long audio into "
                     "~60s VAD-aligned chunks for batching"),
+    model: str = Form("parakeet", description="Model to use: 'parakeet' or 'parakeet_srt_words' for SRT with word timestamps"),
+    prompt: str = Form("en", description="Language code (e.g., 'en' for English, 'ja' for Japanese)"),
+    response_format: str = Form("json", description="Response format: 'json' or 'srt'"),
 ):
     # Create temp file with appropriate extension
     suffix = Path(file.filename or "").suffix or ".wav"
@@ -159,20 +201,24 @@ async def transcribe_audio(
         cleanup_files.append(mp3_tmp_path)
     schedule_cleanup(background_tasks, *cleanup_files)
 
-    # 2 – run ASR
-    model = request.app.state.asr_model
+    # 2 – run ASR with language-specific model
+    # Load the appropriate model for the language
+    asr_model = load_model_for_language(prompt)
+    
+    # Determine if we need timestamps (for SRT format or include_timestamps flag)
+    need_timestamps = include_timestamps or response_format == "srt" or model == "parakeet_srt_words"
 
     try:
-        outs = model.transcribe(
+        outs = asr_model.transcribe(
             [str(p) for p in chunk_paths],
             batch_size=2,
-            timestamps=include_timestamps,
+            timestamps=need_timestamps,
         )
         if (
-          not include_timestamps                     # switch back to model fast-path if timestamps turned off
-          and getattr(model.cfg.decoding, "compute_timestamps", False)
+          not need_timestamps                     # switch back to model fast-path if timestamps turned off
+          and getattr(asr_model.cfg.decoding, "compute_timestamps", False)
         ):
-          reset_fast_path(model)                    
+          reset_fast_path(asr_model)                    
     except RuntimeError as exc:
         logger.exception("ASR failed")
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -181,18 +227,36 @@ async def transcribe_audio(
     if isinstance(outs, tuple):
       outs = outs[0]
     texts = []
-    ts_agg = [] if include_timestamps else None
+    ts_agg = [] if need_timestamps else None
     merged = defaultdict(list)
 
     for h in outs:
         texts.append(getattr(h, "text", str(h)))
-        if include_timestamps:
+        if need_timestamps:
             for k, v in _to_builtin(getattr(h, "timestamp", {})).items():
                 merged[k].extend(v)           # concat lists
 
     merged_text = " ".join(texts).strip()
-    timestamps  = dict(merged) if include_timestamps else None
+    timestamps  = dict(merged) if need_timestamps else None
 
+    # Return SRT format if requested
+    if response_format == "srt" or model == "parakeet_srt_words":
+        # Convert to SRT format
+        segments = timestamps.get('segment', []) if timestamps else []
+        srt_result = segments_to_srt(segments)
+        
+        # Add word-level timestamps if requested
+        if model == "parakeet_srt_words" and timestamps:
+            words = timestamps.get('word', [])
+            json_str_list = [
+                {"start": it['start'], "end": it['end'], "word": it.get('word', it.get('text', ''))} 
+                for it in words
+            ]
+            srt_result += "----..----" + json.dumps(json_str_list)
+        
+        return Response(srt_result, media_type='text/plain')
+    
+    # Return JSON format (default)
     return TranscriptionResponse(text=merged_text, timestamps=timestamps)
 
 @router.get("/debug/cfg")

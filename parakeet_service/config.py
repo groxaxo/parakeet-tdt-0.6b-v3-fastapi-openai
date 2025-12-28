@@ -5,7 +5,12 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v2"  # Keep hardcoded as requested
+# Support multiple models for different languages
+MODEL_NAMES = {
+    "default": "nvidia/parakeet-tdt-0.6b-v3",
+    "ja": "nvidia/parakeet-tdt_ctc-0.6b-ja"
+}
+MODEL_NAME = MODEL_NAMES["default"]  # Default model
 
 # Configuration from environment variables
 TARGET_SR = int(os.getenv("TARGET_SR", "16000"))          # model’s native sample-rate
