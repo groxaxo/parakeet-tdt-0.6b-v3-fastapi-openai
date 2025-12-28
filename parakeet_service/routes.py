@@ -46,16 +46,18 @@ def format_srt_time(seconds: float) -> str:
 def segments_to_srt(segments: list) -> str:
     """Convert NeMo segment timestamps to SRT format string"""
     srt_content = []
-    for i, segment in enumerate(segments):
+    subtitle_index = 1
+    for segment in segments:
         start_time = format_srt_time(segment['start'])
         end_time = format_srt_time(segment['end'])
         text = segment.get('segment', segment.get('text', '')).strip()
         
         if text:  # Only add content if not empty
-            srt_content.append(str(i + 1))
+            srt_content.append(str(subtitle_index))
             srt_content.append(f"{start_time} --> {end_time}")
             srt_content.append(text)
             srt_content.append("")  # Empty line separator
+            subtitle_index += 1
             
     return "\n".join(srt_content)
 
