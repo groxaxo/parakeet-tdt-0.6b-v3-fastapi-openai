@@ -1,18 +1,18 @@
-# Parakeet Whisper API (ONNX INT8 Backend)
+# Parakeet Openai API Compatible (ONNX INT8 Backend)
 
 A high-performance, OpenAI-compatible local speech transcription service using the **Parakeet TDT 1.1B** model (via ONNX Runtime INT8).
 
 ## 🚀 Features
 
--   **Super Fast**: ~17x faster than real-time on standard GPU/CPU setups using ONNX INT8 quantization.
--   **Low Memory**: Uses quantization to reduce VRAM/RAM usage.
+-   **Super Fast**: ~17x faster than real-time on  CPU setups using ONNX INT8 quantization, way faster than Whisper Large turbo v3.
+-   **Low Memory**: Uses quantization to reduce VRAM/RAM usage. (Consumes around 6500mb of ram)
 -   **OpenAI Compatible**: Drop-in replacement for OpenAI's `/v1/audio/transcriptions` endpoint.
 -   **Web Interface**: Simple drag-and-drop UI for easy testing.
 -   **Sanitized Output**: Automatically improved spacing and punctuation.
 
 ## 📊 Benchmarks
 
-Real-world performance tested on `story_spanish.mp3`:
+Real-world performance tested on a I7 4790 CPU , file name `story_spanish.mp3`:
 -   **Audio Duration**: 41.62s
 -   **Processing Time**: ~2.35s
 -   **Speedup**: **17.6x** faster than real-time ⚡
