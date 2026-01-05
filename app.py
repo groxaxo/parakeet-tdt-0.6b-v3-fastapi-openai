@@ -136,7 +136,7 @@ def detect_silence_points(file_path: str, silence_thresh: str = "-40dB", silence
     ]
     
     try:
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
         # Parse stderr output for silence intervals
         silence_points = []
         silence_start = None
@@ -465,7 +465,7 @@ def transcribe_audio():
         else:
             # Time-based chunking (fallback)
             num_chunks = math.ceil(total_duration / CHUNK_DURATION_SECONDS)
-            chunk_boundaries = [i * CHUNK_DURATION_SECONDS for i in range(num_chunks)] + [total_duration]
+            chunk_boundaries = [min(i * CHUNK_DURATION_SECONDS, total_duration) for i in range(num_chunks + 1)]
         
         # Initialize progress tracking
         progress_tracker[unique_id] = {
