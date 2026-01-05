@@ -1,7 +1,14 @@
 host = "0.0.0.0"
 port = 5092
 threads = 8  # Optimized for 8 P-cores
-CHUNK_MINITE = 5  # 5-minute chunks for real-time streaming
+CHUNK_MINUTE = 1.5  # Target 90-second chunks with intelligent silence-based splitting
+
+# Intelligent chunking configuration
+SILENCE_THRESHOLD = "-40dB"  # Silence detection threshold
+SILENCE_MIN_DURATION = 0.5  # Minimum silence duration in seconds
+SILENCE_SEARCH_WINDOW = 30.0  # Search window in seconds around target split point
+SILENCE_DETECT_TIMEOUT = 300  # Timeout for silence detection in seconds
+MIN_SPLIT_GAP = 5.0  # Minimum gap between split points to prevent 0-length chunks
 
 import sys
 
@@ -13,6 +20,7 @@ import uuid
 import subprocess
 import datetime
 import psutil
+from typing import List, Tuple, Optional
 from werkzeug.utils import secure_filename
 
 import flask
@@ -112,6 +120,138 @@ def get_audio_duration(file_path: str) -> float:
     except (subprocess.CalledProcessError, ValueError) as e:
         print(f"Could not get duration of file '{file_path}': {e}")
         return 0.0
+
+
+def detect_silence_points(file_path: str, silence_thresh: str = SILENCE_THRESHOLD, 
+                          silence_duration: float = SILENCE_MIN_DURATION,
+                          total_duration: Optional[float] = None) -> List[Tuple[float, float]]:
+    """
+    Detect silence points in audio file using ffmpeg's silencedetect filter.
+    
+    Args:
+        file_path: Path to audio file
+        silence_thresh: Silence threshold in dB (e.g., "-40dB")
+        silence_duration: Minimum silence duration in seconds
+        total_duration: Total duration of audio (used to close trailing silence)
+        
+    Returns:
+        List of tuples (silence_start, silence_end) in seconds
+    """
+    # Validate file exists
+    if not os.path.exists(file_path):
+        print(f"Error: Audio file '{file_path}' not found for silence detection")
+        return []
+    
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostats",
+        "-i", file_path,
+        "-af", f"silencedetect=noise={silence_thresh}:d={silence_duration}",
+        "-f", "null",
+        "-"
+    ]
+    
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=SILENCE_DETECT_TIMEOUT)
+        
+        # Parse stderr output for silence intervals
+        silence_points = []
+        silence_start = None
+        
+        for line in result.stderr.splitlines():
+            if 'silence_start:' in line:
+                try:
+                    silence_start = float(line.split('silence_start:')[1].split()[0])
+                except (ValueError, IndexError):
+                    silence_start = None
+            elif 'silence_end:' in line and silence_start is not None:
+                try:
+                    silence_end = float(line.split('silence_end:')[1].split()[0])
+                    silence_points.append((silence_start, silence_end))
+                    silence_start = None
+                except (ValueError, IndexError):
+                    pass
+        
+        # Close trailing silence if audio ended during silence
+        if silence_start is not None and total_duration is not None:
+            silence_points.append((silence_start, total_duration))
+        
+        return silence_points
+    except subprocess.TimeoutExpired:
+        print(f"Timeout: Silence detection exceeded {SILENCE_DETECT_TIMEOUT}s timeout")
+        return []
+    except (subprocess.CalledProcessError, OSError) as e:
+        print(f"Error running FFmpeg for silence detection: {e}")
+        return []
+    except Exception as e:
+        print(f"Unexpected error detecting silence: {e}")
+        return []
+
+
+def find_optimal_split_points(total_duration: float, target_chunk_duration: float, 
+                               silence_points: List[Tuple[float, float]], 
+                               search_window: float = SILENCE_SEARCH_WINDOW,
+                               min_gap: float = MIN_SPLIT_GAP) -> List[float]:
+    """
+    Find optimal split points based on silence detection.
+    
+    Args:
+        total_duration: Total audio duration in seconds
+        target_chunk_duration: Target chunk size in seconds
+        silence_points: List of (start, end) tuples for silence periods
+        search_window: Search window in seconds around target split point
+        min_gap: Minimum gap between split points to prevent 0-length chunks
+        
+    Returns:
+        List of split points in seconds
+    """
+    if not silence_points or total_duration <= target_chunk_duration:
+        return []
+    
+    split_points = []
+    prev = 0.0
+    num_chunks = math.ceil(total_duration / target_chunk_duration)
+    
+    for i in range(1, num_chunks):
+        target_time = i * target_chunk_duration
+        search_start = max(0.0, target_time - search_window)
+        search_end = min(total_duration, target_time + search_window)
+        
+        # Find silence points that overlap with the search window
+        candidates = [
+            (start, end) for (start, end) in silence_points
+            if start <= search_end and end >= search_start
+        ]
+        
+        chosen = None
+        if candidates:
+            # Sort candidates by distance from target time
+            candidates_sorted = sorted(
+                candidates,
+                key=lambda silence_range: abs(((silence_range[0] + silence_range[1]) / 2.0) - target_time)
+            )
+            # Find first candidate that satisfies minimum gap constraint
+            for start, end in candidates_sorted:
+                split_point = (start + end) / 2.0
+                if split_point > prev + min_gap and split_point <= total_duration - min_gap:
+                    chosen = split_point
+                    break
+        
+        if chosen is None:
+            # Fallback: target time, but enforce monotonicity and bounds
+            chosen = max(prev + min_gap, min(target_time, total_duration - min_gap))
+            # Ensure chosen doesn't exceed total_duration
+            if chosen > total_duration:
+                chosen = None  # Skip this split point if not feasible
+        
+        split_points.append(chosen)
+        prev = chosen
+    
+    # Filter out None values if any splits were skipped
+    split_points = [sp for sp in split_points if sp is not None]
+    
+    return split_points
 
 
 def format_srt_time(seconds: float) -> str:
@@ -338,13 +478,40 @@ def transcribe_audio():
             ), 500
         temp_files_to_clean.append(target_wav_path)
 
-        CHUNK_DURATION_SECONDS = CHUNK_MINITE * 60
+        CHUNK_DURATION_SECONDS = CHUNK_MINUTE * 60
         total_duration = get_audio_duration(target_wav_path)
         if total_duration == 0:
             return jsonify({"error": "Cannot process audio with 0 duration"}), 400
 
-        num_chunks = math.ceil(total_duration / CHUNK_DURATION_SECONDS)
+        # Use intelligent chunking based on silence detection
         chunk_paths = []
+        split_points = []
+        
+        if total_duration > CHUNK_DURATION_SECONDS:
+            print(f"[{unique_id}] Detecting silence points for intelligent chunking...")
+            silence_points = detect_silence_points(target_wav_path, total_duration=total_duration)
+            
+            if silence_points:
+                print(f"[{unique_id}] Found {len(silence_points)} silence periods")
+                split_points = find_optimal_split_points(
+                    total_duration, 
+                    CHUNK_DURATION_SECONDS, 
+                    silence_points,
+                    search_window=SILENCE_SEARCH_WINDOW
+                )
+                print(f"[{unique_id}] Optimal split points: {[f'{sp:.2f}s' for sp in split_points]}")
+            else:
+                print(f"[{unique_id}] No silence detected, using time-based chunking")
+        
+        # Create chunks based on split points (or use time-based if no silence found)
+        if split_points:
+            # Silence-based chunking
+            chunk_boundaries = [0.0] + split_points + [total_duration]
+            num_chunks = len(chunk_boundaries) - 1
+        else:
+            # Time-based chunking (fallback)
+            num_chunks = math.ceil(total_duration / CHUNK_DURATION_SECONDS)
+            chunk_boundaries = [min(i * CHUNK_DURATION_SECONDS, total_duration) for i in range(num_chunks + 1)]
         
         # Initialize progress tracking
         progress_tracker[unique_id] = {
@@ -361,35 +528,51 @@ def transcribe_audio():
 
         if num_chunks > 1:
             for i in range(num_chunks):
-                start_time = i * CHUNK_DURATION_SECONDS
+                start_time = chunk_boundaries[i]
+                duration = chunk_boundaries[i + 1] - start_time
                 chunk_path = os.path.join(
                     app.config["UPLOAD_FOLDER"], f"{unique_id}_chunk_{i}.wav"
                 )
                 chunk_paths.append(chunk_path)
                 temp_files_to_clean.append(chunk_path)
 
-                print(f"[{unique_id}] Creating chunk {i + 1}/{num_chunks}...")
+                print(f"[{unique_id}] Creating chunk {i + 1}/{num_chunks} ({start_time:.2f}s - {chunk_boundaries[i+1]:.2f}s)...")
                 chunk_command = [
                     "ffmpeg",
                     "-nostdin",
                     "-y",
-                    "-i",
-                    target_wav_path,
                     "-ss",
                     str(start_time),
                     "-t",
-                    str(CHUNK_DURATION_SECONDS),
-                    "-c",
-                    "copy",
+                    str(duration),
+                    "-i",
+                    target_wav_path,
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-c:a",
+                    "pcm_s16le",
                     chunk_path,
                 ]
-                subprocess.run(chunk_command, capture_output=True, text=True)
+                result = subprocess.run(chunk_command, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"Warning: Chunk extraction failed: {result.stderr}")
         else:
             chunk_paths.append(target_wav_path)
 
         all_segments = []
         all_words = []
         cumulative_time_offset = 0.0
+        
+        # Store chunk durations for offset calculation
+        chunk_durations = []
+        if num_chunks > 1:
+            for i in range(num_chunks):
+                duration = chunk_boundaries[i + 1] - chunk_boundaries[i]
+                chunk_durations.append(duration)
+        else:
+            chunk_durations.append(total_duration)
 
         def clean_text(text):
             """Clean up spacing artifacts from token joining"""
@@ -450,8 +633,8 @@ def transcribe_audio():
                     }
                     all_words.append(word)
 
-            chunk_actual_duration = get_audio_duration(chunk_path)
-            cumulative_time_offset += chunk_actual_duration
+            # Use planned chunk duration instead of ffprobe
+            cumulative_time_offset += chunk_durations[i]
 
         print(f"[{unique_id}] All chunks transcribed, merging results.")
         
