@@ -120,7 +120,7 @@ def get_model(model_name):
     """
     # Default to INT8 if model not found
     if model_name not in MODEL_CONFIGS:
-        print(f"Unknown model '{model_name}', falling back to default INT8 model")
+        print(f"⚠️ Unknown model '{model_name}', falling back to default INT8 model")
         model_name = "parakeet-tdt-0.6b-v3"
     
     # Return cached model if available
@@ -164,11 +164,16 @@ def get_model(model_name):
         
         return model
     except Exception as e:
-        print(f"Failed to load model {model_name}: {e}")
+        print(f"❌ Failed to load model {model_name}: {e}")
         import traceback
         traceback.print_exc()
-        # Fallback to default cached model
-        return model_cache.get("parakeet-tdt-0.6b-v3", asr_model)
+        # Try to return the default cached model if available
+        if "parakeet-tdt-0.6b-v3" in model_cache:
+            print(f"⚠️ Falling back to cached default model")
+            return model_cache["parakeet-tdt-0.6b-v3"]
+        else:
+            # If we can't even get the default, we have a serious problem
+            raise RuntimeError(f"Failed to load model {model_name} and no fallback available")
 
 
 app = Flask(__name__)
@@ -518,6 +523,12 @@ def transcribe_audio():
     response_format = request.form.get("response_format", "json")
 
     print(f"Request Model: {model_name} | Format: {response_format}")
+    
+    # Validate model and warn if unknown
+    original_model_name = model_name
+    if model_name not in MODEL_CONFIGS:
+        print(f"⚠️ Unknown model '{model_name}' requested, using default")
+        model_name = "parakeet-tdt-0.6b-v3"
     
     # Get the appropriate model (with lazy loading)
     model_to_use = get_model(model_name)

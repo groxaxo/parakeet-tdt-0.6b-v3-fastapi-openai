@@ -6,82 +6,82 @@ This tests the MODEL_CONFIGS, get_model function logic without loading actual mo
 
 def test_model_configs():
     """Test that MODEL_CONFIGS is properly structured"""
-    MODEL_CONFIGS = {
-        "parakeet-tdt-0.6b-v3": {
-            "hf_id": "nemo-parakeet-tdt-0.6b-v3",
-            "quantization": "int8",
-            "description": "INT8 (fastest)"
-        },
-        "istupakov/parakeet-tdt-0.6b-v3-onnx": {
-            "hf_id": "istupakov/parakeet-tdt-0.6b-v3-onnx",
-            "quantization": None,
-            "description": "FP32"
-        },
-        "grikdotnet/parakeet-tdt-0.6b-fp16": {
-            "hf_id": "grikdotnet/parakeet-tdt-0.6b-fp16",
-            "quantization": "fp16",
-            "description": "FP16"
-        },
-    }
+    # Import the actual MODEL_CONFIGS from app.py to avoid duplication
+    import sys
+    import os
     
-    # Test all models are present
-    assert "parakeet-tdt-0.6b-v3" in MODEL_CONFIGS
-    assert "istupakov/parakeet-tdt-0.6b-v3-onnx" in MODEL_CONFIGS
-    assert "grikdotnet/parakeet-tdt-0.6b-fp16" in MODEL_CONFIGS
+    # Add app.py directory to path
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     
-    # Test each model has required fields
-    for model_name, config in MODEL_CONFIGS.items():
-        assert "hf_id" in config, f"Missing hf_id for {model_name}"
-        assert "quantization" in config, f"Missing quantization for {model_name}"
-        assert "description" in config, f"Missing description for {model_name}"
-        
-    # Test quantization values
-    assert MODEL_CONFIGS["parakeet-tdt-0.6b-v3"]["quantization"] == "int8"
-    assert MODEL_CONFIGS["istupakov/parakeet-tdt-0.6b-v3-onnx"]["quantization"] is None
-    assert MODEL_CONFIGS["grikdotnet/parakeet-tdt-0.6b-fp16"]["quantization"] == "fp16"
+    # Since we can't import app.py without triggering model loading,
+    # we'll verify it by reading the file content
+    with open('app.py', 'r') as f:
+        content = f.read()
+    
+    # Verify MODEL_CONFIGS structure exists
+    assert 'MODEL_CONFIGS = {' in content
+    assert '"parakeet-tdt-0.6b-v3"' in content
+    assert '"istupakov/parakeet-tdt-0.6b-v3-onnx"' in content
+    assert '"grikdotnet/parakeet-tdt-0.6b-fp16"' in content
+    
+    # Verify quantization settings are present
+    assert '"quantization": "int8"' in content
+    assert '"quantization": None' in content
+    assert '"quantization": "fp16"' in content
+    
+    # Verify HuggingFace IDs are present
+    assert '"hf_id": "nemo-parakeet-tdt-0.6b-v3"' in content
+    assert '"hf_id": "istupakov/parakeet-tdt-0.6b-v3-onnx"' in content
+    assert '"hf_id": "grikdotnet/parakeet-tdt-0.6b-fp16"' in content
     
     print("✅ MODEL_CONFIGS structure test passed")
 
 
 def test_model_fallback_logic():
     """Test the fallback logic when unknown model is requested"""
-    MODEL_CONFIGS = {
-        "parakeet-tdt-0.6b-v3": {
-            "hf_id": "nemo-parakeet-tdt-0.6b-v3",
-            "quantization": "int8",
-            "description": "INT8 (fastest)"
-        },
-        "istupakov/parakeet-tdt-0.6b-v3-onnx": {
-            "hf_id": "istupakov/parakeet-tdt-0.6b-v3-onnx",
-            "quantization": None,
-            "description": "FP32"
-        },
-        "grikdotnet/parakeet-tdt-0.6b-fp16": {
-            "hf_id": "grikdotnet/parakeet-tdt-0.6b-fp16",
-            "quantization": "fp16",
-            "description": "FP16"
-        },
-    }
+    # Read app.py to verify fallback logic
+    with open('app.py', 'r') as f:
+        content = f.read()
     
-    # Test that unknown model falls back to default
-    unknown_model = "unknown-model"
-    if unknown_model not in MODEL_CONFIGS:
-        model_name = "parakeet-tdt-0.6b-v3"  # Fallback
-        assert model_name == "parakeet-tdt-0.6b-v3"
-        
-    # Test that known models are recognized
-    for known_model in MODEL_CONFIGS.keys():
-        assert known_model in MODEL_CONFIGS
-        
+    # Verify fallback is implemented
+    assert 'if model_name not in MODEL_CONFIGS:' in content
+    assert 'parakeet-tdt-0.6b-v3' in content  # Default fallback model
+    
+    # Verify warning is logged
+    assert 'Unknown model' in content or 'unknown model' in content.lower()
+    
     print("✅ Model fallback logic test passed")
+
+
+def test_lazy_loading_caching():
+    """Test that lazy loading and caching are implemented"""
+    with open('app.py', 'r') as f:
+        content = f.read()
+    
+    # Verify model_cache exists
+    assert 'model_cache = {}' in content
+    
+    # Verify get_model function exists
+    assert 'def get_model(model_name):' in content
+    
+    # Verify caching logic
+    assert 'if model_name in model_cache:' in content
+    assert 'model_cache[model_name] = model' in content
+    
+    print("✅ Lazy loading and caching test passed")
 
 
 def test_openai_compatibility():
     """Test OpenAI compatible parameter defaults"""
-    # Default model should be parakeet variant, not whisper
-    default_model = "parakeet-tdt-0.6b-v3"
-    assert default_model != "whisper-1"
-    assert default_model == "parakeet-tdt-0.6b-v3"
+    with open('app.py', 'r') as f:
+        content = f.read()
+    
+    # Default model should be parakeet variant
+    assert 'model", "parakeet-tdt-0.6b-v3"' in content
+    
+    # Verify model_to_use is called
+    assert 'model_to_use = get_model(model_name)' in content
+    assert 'model_to_use.recognize(chunk_path)' in content
     
     print("✅ OpenAI compatibility test passed")
 
