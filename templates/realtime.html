@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parakeet Realtime Demo</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --accent: #10b981;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top, #1f2937 0%, var(--bg) 45%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0));
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 20px;
+      backdrop-filter: blur(5px);
+    }
+    h1 { margin: 0 0 8px; font-size: 1.4rem; }
+    p { margin: 0; color: var(--muted); }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+      align-items: center;
+    }
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .control-card {
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255,255,255,0.02);
+    }
+    .control-card h2 {
+      margin: 0 0 10px;
+      font-size: 0.95rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .inline-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+    }
+    .checkbox-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 44px;
+    }
+    .slider-value {
+      color: var(--muted);
+      font-size: 0.88rem;
+      min-width: 56px;
+      text-align: right;
+    }
+    button, select, input {
+      background: #111827;
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.95rem;
+    }
+    button { cursor: pointer; }
+    button.primary {
+      border-color: var(--accent);
+      background: rgba(16,185,129,0.15);
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .badge {
+      display: inline-block;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 0.8rem;
+      margin-left: 8px;
+    }
+    .badge.ok { border-color: var(--accent); color: var(--accent); }
+    .badge.warn { border-color: var(--warn); color: var(--warn); }
+    textarea {
+      width: 100%;
+      margin-top: 14px;
+      min-height: 360px;
+      resize: vertical;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: var(--card);
+      color: var(--text);
+      padding: 14px;
+      line-height: 1.45;
+      font-size: 0.98rem;
+    }
+    .small {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+    @media (min-width: 768px) {
+      .controls-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Parakeet Realtime Transcription</h1>
+    <p>OpenAI Realtime-compatible subset with local extensions. Draft text updates during speech, final text replaces utterances after pause/commit.</p>
+
+    <div class="row">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="startBtn" disabled>Start Mic</button>
+      <button id="stopBtn" disabled>Stop Mic</button>
+      <button id="commitBtn" disabled>Commit Utterance</button>
+      <select id="modelSelect">
+        <option value="parakeet-tdt-0.6b-v3">parakeet-tdt-0.6b-v3</option>
+        <option value="grikdotnet/parakeet-tdt-0.6b-fp16">grikdotnet/parakeet-tdt-0.6b-fp16</option>
+        <option value="istupakov/parakeet-tdt-0.6b-v3-onnx">istupakov/parakeet-tdt-0.6b-v3-onnx</option>
+      </select>
+      <label class="inline-control">
+        Language
+        <select id="languageSelect">
+          <option value="autodetect">Autodetect</option>
+          <option value="en">English</option>
+          <option value="nl">Dutch</option>
+        </select>
+      </label>
+      <label>
+        Context utterances
+        <input id="contextInput" type="number" min="0" max="8" value="0" style="width:75px; margin-left:8px;" />
+      </label>
+      <label class="inline-control">
+        Silence break
+        <input id="silenceBreakInput" type="range" min="300" max="2000" step="50" value="900" />
+        <span id="silenceBreakValue" class="slider-value">900 ms</span>
+      </label>
+      <label class="checkbox-control">
+        <input id="newLinePerFinalInput" type="checkbox" />
+        New line per final sentence
+      </label>
+    </div>
+    <div class="controls-grid">
+      <div class="control-card">
+        <h2>Second Pass / Partial</h2>
+        <div class="row" style="margin-top:0;">
+          <label class="inline-control">
+            Partial cooldown
+            <input id="partialCooldownInput" type="range" min="0.2" max="2.0" step="0.1" value="0.8" />
+            <span id="partialCooldownValue" class="slider-value">0.8 s</span>
+          </label>
+          <label class="inline-control">
+            Min partial length
+            <input id="minPartialInput" type="range" min="0.2" max="3.0" step="0.1" value="1.0" />
+            <span id="minPartialValue" class="slider-value">1.0 s</span>
+          </label>
+          <label class="inline-control">
+            Partial window
+            <input id="maxPartialWindowInput" type="range" min="1.0" max="12.0" step="0.5" value="5.0" />
+            <span id="maxPartialWindowValue" class="slider-value">5.0 s</span>
+          </label>
+          <label class="inline-control">
+            Min final length
+            <input id="minFinalInput" type="range" min="0.1" max="2.0" step="0.1" value="0.25" />
+            <span id="minFinalValue" class="slider-value">0.25 s</span>
+          </label>
+        </div>
+      </div>
+      <div class="control-card">
+        <h2>Speech Detection / Mic</h2>
+        <div class="row" style="margin-top:0;">
+          <label class="inline-control">
+            VAD silence RMS
+            <input id="vadThresholdInput" type="range" min="0.002" max="0.060" step="0.001" value="0.012" />
+            <span id="vadThresholdValue" class="slider-value">0.012</span>
+          </label>
+          <label class="checkbox-control">
+            <input id="echoCancellationInput" type="checkbox" checked />
+            Echo cancellation
+          </label>
+          <label class="checkbox-control">
+            <input id="noiseSuppressionInput" type="checkbox" checked />
+            Noise suppression
+          </label>
+          <label class="checkbox-control">
+            <input id="autoGainControlInput" type="checkbox" checked />
+            Auto gain control
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="status" id="status">Disconnected <span id="wsBadge" class="badge">WS</span></div>
+    <textarea id="transcriptBox" placeholder="Live transcript appears here..."></textarea>
+    <div class="small">Protocol events used: <code>session.update</code>, <code>input_audio_buffer.append</code>, <code>input_audio_buffer.commit</code>, <code>response.create</code></div>
+  </div>
+
+  <script src="/static/realtime.js"></script>
+</body>
+</html>

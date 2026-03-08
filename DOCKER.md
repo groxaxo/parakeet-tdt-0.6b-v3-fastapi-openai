@@ -38,6 +38,8 @@ docker run -d --name parakeet-gpu -p 5092:5092 --gpus all \
 | `http://localhost:5092` | Web UI |
 | `http://localhost:5092/health` | Health check |
 | `http://localhost:5092/v1/audio/transcriptions` | OpenAI-compatible API |
+| `ws://localhost:5092/v1/realtime` | Realtime websocket (OpenAI-compatible subset) |
+| `http://localhost:5092/realtime-demo` | Browser mic realtime demo |
 | `http://localhost:5092/docs` | Swagger documentation |
 
 ## Configuration

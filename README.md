@@ -133,7 +133,7 @@ Parakeet TDT provides an OpenAI-compatible API server.
 
 ```bash
 conda activate parakeet-onnx
-python app.py
+uvicorn asgi_app:app --host 0.0.0.0 --port 5092
 ```
 *   **Port**: 5092
 *   **Docs**: [http://127.0.0.1:5092/docs](http://127.0.0.1:5092/docs)
@@ -188,6 +188,36 @@ Access it at: **[http://127.0.0.1:5092](http://127.0.0.1:5092)**
 
 The web interface includes a dropdown menu to select between INT8, FP16, and FP32 model variants.
 
+### Realtime WebSocket Streaming (Browser Mic)
+
+The project now includes a local realtime transcription endpoint using an OpenAI Realtime-compatible subset with local extensions.
+
+- **WebSocket endpoint**: `ws://127.0.0.1:5092/v1/realtime`
+- **Demo page**: `http://127.0.0.1:5092/realtime-demo`
+- **Input format**: PCM16 mono, 16kHz (`input_audio_buffer.append`)
+- **Output events**:
+  - `response.output_text.delta` (partial draft text)
+  - `response.output_text.done` (final text after commit/silence with deterministic punctuation pass)
+
+Supported client events:
+- `session.update` (`model`, `context_utterances`, `language`, `silence_break_ms`, `new_line_per_final`, `vad_silence_rms_threshold`, `partial_cooldown_seconds`, `min_partial_seconds`, `max_partial_window_seconds`, `min_final_seconds`)
+- `input_audio_buffer.append` (base64 PCM16 chunk)
+- `input_audio_buffer.commit` (finalize current utterance)
+- `response.create` (request partial output)
+
+Realtime demo tuning controls (`/realtime-demo`):
+- **Language**: `Autodetect`, `English` (`en`), `Dutch` (`nl`)
+- **Silence break** (`silence_break_ms`): 300-2000 ms (default 900 ms) before silence-triggered auto-commit/final pass
+- **New line per final sentence** (`new_line_per_final`): when enabled, each finalized utterance is rendered on a new line
+- **VAD silence RMS threshold** (`vad_silence_rms_threshold`): 0.002-0.060 (default 0.012) speech/silence sensitivity
+- **Partial cooldown** (`partial_cooldown_seconds`): 0.2-2.0 s (default 0.8 s) minimum interval between partial updates
+- **Min partial length** (`min_partial_seconds`): 0.2-3.0 s (default 1.0 s) before emitting partial text
+- **Partial decode window** (`max_partial_window_seconds`): 1.0-12.0 s (default 5.0 s) audio span used for partial re-decodes
+- **Min final length** (`min_final_seconds`): 0.1-2.0 s (default 0.25 s) below this, commit is discarded as too short
+- **Mic preprocessing toggles**: echo cancellation, noise suppression, and auto gain control for browser capture
+
+Note: this is a compatible subset for fast local shipping, not strict full parity with OpenAI hosted realtime behavior.
+
 ## 🔌 Open WebUI Integration
 
 **This project provides out-of-the-box compatibility with [Open WebUI](https://openwebui.com/)**, serving as a drop-in replacement for OpenAI's speech-to-text API. Experience lightning-fast, local transcription across 25 languages with automatic language detection!
@@ -197,7 +227,7 @@ The web interface includes a dropdown menu to select between INT8, FP16, and FP3
 1.  **Start the Parakeet Server** (if not already running):
     ```bash
     conda activate parakeet-onnx
-    python app.py
+    uvicorn asgi_app:app --host 0.0.0.0 --port 5092
     ```
     The server will be available at `http://127.0.0.1:5092`
 
