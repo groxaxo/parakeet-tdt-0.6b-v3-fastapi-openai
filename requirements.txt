@@ -1,6 +1,8 @@
 onnx-asr[hub]>=0.10.0
 waitress>=3.0.0
 flask>=3.0.0
+fastapi>=0.122.0
+uvicorn[standard]>=0.30.0
 openai>=1.0.0
 typing_extensions>=4.0.0
 psutil>=5.0.0
