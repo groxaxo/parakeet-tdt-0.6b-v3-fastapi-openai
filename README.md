@@ -1,11 +1,13 @@
-# Parakeet TDT Transcription with ONNX Runtime
+# Parakeet TDT Transcription for macOS (ONNX + MLX Workflow)
 
 [![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/release/python-3100/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Parakeet TDT** is a high-performance implementation of NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model using [ONNX Runtime](https://onnxruntime.ai/), designed for ultra-fast inference on CPU.
+**Parakeet TDT** is a macOS-first, high-performance implementation of NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model using [ONNX Runtime](https://onnxruntime.ai/), designed for ultra-fast local inference on CPU.
 
 This implementation achieves exceptional real-time speeds, outperforming standard [openai/whisper](https://github.com/openai/whisper) and competing directly with GPU-accelerated [faster-whisper](https://github.com/SYSTRAN/faster-whisper) implementations while running entirely on consumer CPUs. The efficiency is achieved through the architectural advantages of the Token-and-Duration Transducer (TDT) model combined with 8-bit quantization.
+
+If you work in an Apple stack, this repo is intended as a practical ONNX serving layer that fits naturally beside MLX experimentation workflows. In this codebase, transcription serving runs on ONNX model variants (`INT8`, `FP16`, `FP32`) loaded from `models/`.
 
 ## 🌍 Multilingual Support
 
@@ -85,15 +87,28 @@ Additional benchmark on real-world YouTube content across multiple languages:
 
 ## Requirements
 
-*   [Docker](https://docs.docker.com/get-docker/) (Recommended)
-*   Or: Python 3.10+ and [FFmpeg](https://ffmpeg.org/)
+*   macOS (Apple Silicon recommended) or Linux
+*   Python 3.10+ and [FFmpeg](https://ffmpeg.org/) for local development
+*   [Docker](https://docs.docker.com/get-docker/) for containerized deployments
 
 ### CPU Optimization
 For hybrid CPUs (like Intel 12th-14th Gen), performance is significantly improved by pinning the process to Performance cores (P-cores).
 
 ## Installation
 
-### 🐳 Docker (Recommended)
+### macOS Local Setup (Recommended)
+
+For the best Apple developer workflow (fast iteration, local debugging, ONNX model switching):
+
+```bash
+conda create -n parakeet-onnx python=3.10
+conda activate parakeet-onnx
+git clone https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai
+cd parakeet-tdt-0.6b-v3-fastapi-openai
+pip install -r requirements.txt
+```
+
+### 🐳 Docker (Alternative)
 
 The easiest way to get started. No dependencies to install!
 
@@ -192,12 +207,20 @@ The web interface includes a dropdown menu to select between INT8, FP16, and FP3
 
 The project now includes a local realtime transcription endpoint using an OpenAI Realtime-compatible subset with local extensions.
 
+Use the realtime API endpoint directly, or use the built-in demo environment to quickly validate end-to-end mic capture -> WebSocket streaming -> partial/final transcription on macOS.
+
 - **WebSocket endpoint**: `ws://127.0.0.1:5092/v1/realtime`
 - **Demo page**: `http://127.0.0.1:5092/realtime-demo`
 - **Input format**: PCM16 mono, 16kHz (`input_audio_buffer.append`)
 - **Output events**:
   - `response.output_text.delta` (partial draft text)
   - `response.output_text.done` (final text after commit/silence with deterministic punctuation pass)
+
+Quick realtime test flow:
+1. Start the server (`uvicorn asgi_app:app --host 0.0.0.0 --port 5092`)
+2. Open `http://127.0.0.1:5092/realtime-demo`
+3. Allow microphone access in your browser
+4. Speak and verify live partial updates (`response.output_text.delta`) and finalized output (`response.output_text.done`)
 
 Supported client events:
 - `session.update` (`model`, `context_utterances`, `language`, `silence_break_ms`, `new_line_per_final`, `vad_silence_rms_threshold`, `partial_cooldown_seconds`, `min_partial_seconds`, `max_partial_window_seconds`, `min_final_seconds`)
@@ -247,7 +270,14 @@ Note: this is a compatible subset for fast local shipping, not strict full parit
 
 ## Model details
 
-When running the application, the ONNX models are automatically loaded from the `models/` directory. The primary model used is the **Parakeet TDT 0.6B v3** converted to ONNX with INT8 quantization, providing the optimal balance of speed and accuracy for multilingual speech recognition across 25 European languages.
+When running the application, ONNX model variants are automatically loaded from the `models/` directory. The default model is **Parakeet TDT 0.6B v3** in INT8 ONNX format for fast, practical local inference.
+
+Available model family in this server:
+- `parakeet-tdt-0.6b-v3` (INT8 ONNX, default, fastest)
+- `grikdotnet/parakeet-tdt-0.6b-fp16` (FP16 ONNX)
+- `istupakov/parakeet-tdt-0.6b-v3-onnx` (FP32 ONNX)
+
+This repository is optimized around ONNX model serving, while remaining easy to use in broader macOS speech stacks that also include MLX tooling.
 
 ## 🙏 Acknowledgments
 
