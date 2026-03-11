@@ -57,17 +57,17 @@ class FakeOrt:
 
 def with_env(**updates):
     class EnvContext:
-        def __enter__(self_inner):
-            self_inner.previous = {}
+        def __enter__(ctx):
+            ctx.previous = {}
             for key, value in updates.items():
-                self_inner.previous[key] = os.environ.get(key)
+                ctx.previous[key] = os.environ.get(key)
                 if value is None:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
 
-        def __exit__(self_inner, exc_type, exc, tb):
-            for key, value in self_inner.previous.items():
+        def __exit__(ctx, exc_type, exc, tb):
+            for key, value in ctx.previous.items():
                 if value is None:
                     os.environ.pop(key, None)
                 else:

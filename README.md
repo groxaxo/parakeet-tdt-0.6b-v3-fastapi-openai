@@ -165,6 +165,7 @@ Runtime backend selection is controlled with environment variables:
 | `OV_CACHE_DIR` | empty | Optional OpenVINO model cache directory |
 
 `ASR_BACKEND=auto` preserves the existing default provider priority: TensorRT → CUDA → CPU. OpenVINO is never selected automatically; it is only used when you explicitly set `ASR_BACKEND=openvino`.
+These environment variables are read when the server starts, so restart the process or container after changing them.
 
 ### Client Example (Python)
 
