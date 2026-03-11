@@ -118,21 +118,51 @@ def get_default_concurrency(backend, web_threads):
     return max(1, web_threads)
 
 
+def load_asr_model(config, ort, backend, loader=None):
+    backend = (backend or "auto").strip().lower()
+    loader = loader or onnx_asr.load_model
+
+    providers_to_try = build_provider_chain(ort, backend)
+    sess_options = build_session_options(ort, backend, providers_to_try)
+
+    try:
+        model = loader(
+            config["hf_id"],
+            quantization=config["quantization"],
+            providers=providers_to_try,
+            sess_options=sess_options,
+        ).with_timestamps()
+        return model, backend
+    except Exception as exc:
+        if backend != "openvino":
+            raise
+
+        print(
+            "⚠️ OpenVINO model initialization failed, retrying with CPUExecutionProvider: "
+            f"{exc}"
+        )
+        cpu_backend = "cpu"
+        cpu_providers = build_provider_chain(ort, cpu_backend)
+        cpu_sess_options = build_session_options(ort, cpu_backend, cpu_providers)
+        model = loader(
+            config["hf_id"],
+            quantization=config["quantization"],
+            providers=cpu_providers,
+            sess_options=cpu_sess_options,
+        ).with_timestamps()
+        print("⚠️ Continuing with CPUExecutionProvider after OpenVINO initialization failure")
+        return model, cpu_backend
+
+
 host = "0.0.0.0"
 port = get_env_int("PORT", 5092)
 threads = max(1, get_env_int("WEB_THREADS", 8))
 VALID_BACKENDS = {"auto", "cpu", "cuda", "tensorrt", "openvino"}
-ASR_BACKEND = (os.environ.get("ASR_BACKEND", "auto").strip().lower() or "auto")
-if ASR_BACKEND not in VALID_BACKENDS:
-    print(f"⚠️ Unknown ASR_BACKEND={ASR_BACKEND!r}, falling back to auto")
-    ASR_BACKEND = "auto"
-MAX_CONCURRENT_INFERENCES = max(
-    1,
-    get_env_int(
-        "MAX_CONCURRENT_INFERENCES",
-        get_default_concurrency(ASR_BACKEND, threads),
-    ),
-)
+REQUESTED_BACKEND = (os.environ.get("ASR_BACKEND", "auto").strip().lower() or "auto")
+if REQUESTED_BACKEND not in VALID_BACKENDS:
+    print(f"⚠️ Unknown ASR_BACKEND={REQUESTED_BACKEND!r}, falling back to auto")
+    REQUESTED_BACKEND = "auto"
+ACTIVE_BACKEND = REQUESTED_BACKEND
 
 CHUNK_MINUTE = 1.5  # Target 90-second chunks with intelligent silence-based splitting
 
@@ -181,28 +211,21 @@ try:
     # Detect available providers
     available_providers = ort.get_available_providers()
     print(f"Available providers: {available_providers}")
-    print(f"Selected ASR backend: {ASR_BACKEND}")
+    print(f"Selected ASR backend: {REQUESTED_BACKEND}")
 
-    providers_to_try = build_provider_chain(ort, ASR_BACKEND)
+    providers_to_try = build_provider_chain(ort, REQUESTED_BACKEND)
     print(f"Using providers: {providers_to_try}")
 
     # Load default INT8 model at startup
     print("\nLoading default Parakeet TDT 0.6B V3 ONNX model with INT8 quantization...")
 
-    sess_options = build_session_options(ort, ASR_BACKEND, providers_to_try)
-
     default_config = MODEL_CONFIGS["parakeet-tdt-0.6b-v3"]
-    asr_model = onnx_asr.load_model(
-        default_config["hf_id"],
-        quantization=default_config["quantization"],
-        providers=providers_to_try,
-        sess_options=sess_options,
-    ).with_timestamps()
+    asr_model, ACTIVE_BACKEND = load_asr_model(default_config, ort, REQUESTED_BACKEND)
     
     # Cache the default model
     model_cache["parakeet-tdt-0.6b-v3"] = asr_model
     
-    print("Default model loaded successfully with CPU optimization!")
+    print(f"Default model loaded successfully with backend: {ACTIVE_BACKEND}")
 except Exception as e:
     print(f"❌ Model loading failed: {e}")
     import traceback
@@ -210,6 +233,14 @@ except Exception as e:
     sys.exit()
 
 print("=" * 50)
+
+MAX_CONCURRENT_INFERENCES = max(
+    1,
+    get_env_int(
+        "MAX_CONCURRENT_INFERENCES",
+        get_default_concurrency(ACTIVE_BACKEND, threads),
+    ),
+)
 
 
 def get_model(model_name):
@@ -239,19 +270,11 @@ def get_model(model_name):
     try:
         import onnxruntime as ort
 
-        providers_to_try = build_provider_chain(ort, ASR_BACKEND)
-        sess_options = build_session_options(ort, ASR_BACKEND, providers_to_try)
-
-        model = onnx_asr.load_model(
-            config["hf_id"],
-            quantization=config["quantization"],
-            providers=providers_to_try,
-            sess_options=sess_options,
-        ).with_timestamps()
+        model, loaded_backend = load_asr_model(config, ort, ACTIVE_BACKEND)
         
         # Cache the loaded model
         model_cache[model_name] = model
-        print(f"Model {model_name} loaded successfully")
+        print(f"Model {model_name} loaded successfully with backend: {loaded_backend}")
         
         return model
     except Exception as e:

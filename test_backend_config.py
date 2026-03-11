@@ -17,6 +17,7 @@ def load_helpers():
         "build_provider_chain",
         "build_session_options",
         "get_default_concurrency",
+        "load_asr_model",
     }
     helper_nodes = [
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in helper_names
@@ -53,6 +54,10 @@ class FakeOrt:
 
     def get_available_providers(self):
         return list(self._providers)
+
+
+def provider_name(provider):
+    return provider[0] if isinstance(provider, tuple) else provider
 
 
 def with_env(**updates):
@@ -174,10 +179,45 @@ def test_session_options_and_concurrency():
     print("✅ session tuning and concurrency test passed")
 
 
+def test_openvino_model_load_falls_back_to_cpu():
+    load_asr_model = helpers["load_asr_model"]
+    calls = []
+
+    class FakeLoadedModel:
+        def with_timestamps(self):
+            return self
+
+    def fake_loader(hf_id, quantization=None, providers=None, sess_options=None):
+        assert providers, "Expected provider list during model load"
+        calls.append(providers)
+        if provider_name(providers[0]) == "OpenVINOExecutionProvider":
+            raise RuntimeError("dynamic rank MatMul unsupported")
+        return FakeLoadedModel()
+
+    with with_env(
+        OV_DEVICE="GPU",
+        OV_HINT="LATENCY",
+        OV_EXECUTION_MODE="ACCURACY",
+    ):
+        model, backend = load_asr_model(
+            {"hf_id": "demo/model", "quantization": "int8"},
+            FakeOrt(["OpenVINOExecutionProvider", "CPUExecutionProvider"]),
+            "openvino",
+            loader=fake_loader,
+        )
+
+    assert isinstance(model, FakeLoadedModel)
+    assert backend == "cpu"
+    assert len(calls) == 2
+    assert calls[1] == ["CPUExecutionProvider"]
+    print("✅ openvino model load fallback test passed")
+
+
 if __name__ == "__main__":
     test_get_env_int()
     test_auto_backend_priority()
     test_openvino_provider_chain()
     test_openvino_requires_provider()
     test_session_options_and_concurrency()
+    test_openvino_model_load_falls_back_to_cpu()
     print("\n✅ Backend configuration tests passed successfully!")
