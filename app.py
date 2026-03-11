@@ -1,15 +1,3 @@
-host = "0.0.0.0"
-port = 5092
-threads = 8  # Optimized for 8 P-cores
-CHUNK_MINUTE = 1.5  # Target 90-second chunks with intelligent silence-based splitting
-
-# Intelligent chunking configuration
-SILENCE_THRESHOLD = "-40dB"  # Silence detection threshold
-SILENCE_MIN_DURATION = 0.5  # Minimum silence duration in seconds
-SILENCE_SEARCH_WINDOW = 30.0  # Search window in seconds around target split point
-SILENCE_DETECT_TIMEOUT = 300  # Timeout for silence detection in seconds
-MIN_SPLIT_GAP = 5.0  # Minimum gap between split points to prevent 0-length chunks
-
 import sys
 
 sys.stdout = sys.stderr
@@ -27,6 +15,133 @@ import flask
 from flask import Flask, request, jsonify, render_template, Response
 from waitress import serve
 from pathlib import Path
+
+
+def get_env_int(name, default):
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        print(f"⚠️ Invalid integer for {name}={value!r}, using default {default}")
+        return default
+
+
+def is_openvino_provider_selected(providers):
+    for provider in providers:
+        provider_name = provider[0] if isinstance(provider, (tuple, list)) else provider
+        if provider_name == "OpenVINOExecutionProvider":
+            return True
+    return False
+
+
+def build_provider_chain(ort, backend):
+    available_providers = ort.get_available_providers()
+    backend = (backend or "auto").strip().lower()
+
+    if backend == "openvino":
+        if "OpenVINOExecutionProvider" not in available_providers:
+            raise RuntimeError(
+                "ASR_BACKEND=openvino requires OpenVINOExecutionProvider. "
+                "Install the optional OpenVINO dependencies first."
+            )
+
+        ov_device = os.environ.get("OV_DEVICE", "GPU").strip().upper() or "GPU"
+        ov_hint = os.environ.get("OV_HINT", "LATENCY").strip().upper() or "LATENCY"
+        ov_execution_mode = (
+            os.environ.get("OV_EXECUTION_MODE", "ACCURACY").strip().upper() or "ACCURACY"
+        )
+        ov_cache_dir = os.environ.get("OV_CACHE_DIR", "").strip()
+
+        provider_options = {"device_type": ov_device}
+        if ov_cache_dir:
+            provider_options["cache_dir"] = ov_cache_dir
+
+        load_config = {}
+        if ov_hint:
+            load_config["PERFORMANCE_HINT"] = ov_hint
+        if ov_execution_mode:
+            load_config["EXECUTION_MODE_HINT"] = ov_execution_mode
+        if load_config:
+            provider_options["load_config"] = json.dumps({ov_device: load_config})
+
+        return [("OpenVINOExecutionProvider", provider_options), "CPUExecutionProvider"]
+
+    if backend == "cpu":
+        return ["CPUExecutionProvider"]
+
+    if backend == "cuda":
+        providers = []
+        if "CUDAExecutionProvider" in available_providers:
+            providers.append("CUDAExecutionProvider")
+        providers.append("CPUExecutionProvider")
+        return providers
+
+    if backend == "tensorrt":
+        providers = []
+        if "TensorrtExecutionProvider" in available_providers:
+            providers.append("TensorrtExecutionProvider")
+        if "CUDAExecutionProvider" in available_providers:
+            providers.append("CUDAExecutionProvider")
+        providers.append("CPUExecutionProvider")
+        return providers
+
+    providers = []
+    if "TensorrtExecutionProvider" in available_providers:
+        providers.append("TensorrtExecutionProvider")
+    if "CUDAExecutionProvider" in available_providers:
+        providers.append("CUDAExecutionProvider")
+    providers.append("CPUExecutionProvider")
+    return providers
+
+
+def build_session_options(ort, backend, providers):
+    web_threads = max(1, get_env_int("WEB_THREADS", 8))
+    sess_options = ort.SessionOptions()
+    sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    if is_openvino_provider_selected(providers):
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+    else:
+        sess_options.intra_op_num_threads = max(1, web_threads // 2)
+        sess_options.inter_op_num_threads = 1
+
+    return sess_options
+
+
+def get_default_concurrency(backend, web_threads):
+    if (backend or "auto").strip().lower() == "openvino":
+        return 1
+    return max(1, web_threads)
+
+
+host = "0.0.0.0"
+port = get_env_int("PORT", 5092)
+threads = max(1, get_env_int("WEB_THREADS", 8))
+VALID_BACKENDS = {"auto", "cpu", "cuda", "tensorrt", "openvino"}
+ASR_BACKEND = (os.environ.get("ASR_BACKEND", "auto").strip().lower() or "auto")
+if ASR_BACKEND not in VALID_BACKENDS:
+    print(f"⚠️ Unknown ASR_BACKEND={ASR_BACKEND!r}, falling back to auto")
+    ASR_BACKEND = "auto"
+MAX_CONCURRENT_INFERENCES = max(
+    1,
+    get_env_int(
+        "MAX_CONCURRENT_INFERENCES",
+        get_default_concurrency(ASR_BACKEND, threads),
+    ),
+)
+
+CHUNK_MINUTE = 1.5  # Target 90-second chunks with intelligent silence-based splitting
+
+# Intelligent chunking configuration
+SILENCE_THRESHOLD = "-40dB"  # Silence detection threshold
+SILENCE_MIN_DURATION = 0.5  # Minimum silence duration in seconds
+SILENCE_SEARCH_WINDOW = 30.0  # Search window in seconds around target split point
+SILENCE_DETECT_TIMEOUT = 300  # Timeout for silence detection in seconds
+MIN_SPLIT_GAP = 5.0  # Minimum gap between split points to prevent 0-length chunks
 
 ROOT_DIR = Path(os.getcwd()).as_posix()
 os.environ["HF_HOME"] = ROOT_DIR + "/models"
@@ -62,30 +177,19 @@ try:
     print("\nInitializing ONNX Runtime...")
     import onnx_asr
     import onnxruntime as ort
-    
+
     # Detect available providers
     available_providers = ort.get_available_providers()
     print(f"Available providers: {available_providers}")
-    
-    # Priority: Tensorrt, CUDA, CPU
-    providers_to_try = []
-    if "TensorrtExecutionProvider" in available_providers:
-        providers_to_try.append("TensorrtExecutionProvider")
-    if "CUDAExecutionProvider" in available_providers:
-        providers_to_try.append("CUDAExecutionProvider")
-    providers_to_try.append("CPUExecutionProvider")
-    
+    print(f"Selected ASR backend: {ASR_BACKEND}")
+
+    providers_to_try = build_provider_chain(ort, ASR_BACKEND)
     print(f"Using providers: {providers_to_try}")
 
     # Load default INT8 model at startup
     print("\nLoading default Parakeet TDT 0.6B V3 ONNX model with INT8 quantization...")
-    
-    # Configure session options for optimal CPU performance
-    sess_options = ort.SessionOptions()
-    sess_options.intra_op_num_threads = 4  # Match Waitress threads
-    sess_options.inter_op_num_threads = 1
-    sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    sess_options = build_session_options(ort, ASR_BACKEND, providers_to_try)
 
     default_config = MODEL_CONFIGS["parakeet-tdt-0.6b-v3"]
     asr_model = onnx_asr.load_model(
@@ -134,23 +238,10 @@ def get_model(model_name):
     
     try:
         import onnxruntime as ort
-        
-        # Reuse providers from startup
-        available_providers = ort.get_available_providers()
-        providers_to_try = []
-        if "TensorrtExecutionProvider" in available_providers:
-            providers_to_try.append("TensorrtExecutionProvider")
-        if "CUDAExecutionProvider" in available_providers:
-            providers_to_try.append("CUDAExecutionProvider")
-        providers_to_try.append("CPUExecutionProvider")
-        
-        # Configure session options
-        sess_options = ort.SessionOptions()
-        sess_options.intra_op_num_threads = 4
-        sess_options.inter_op_num_threads = 1
-        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        
+
+        providers_to_try = build_provider_chain(ort, ASR_BACKEND)
+        sess_options = build_session_options(ort, ASR_BACKEND, providers_to_try)
+
         model = onnx_asr.load_model(
             config["hf_id"],
             quantization=config["quantization"],
@@ -183,6 +274,7 @@ app.config["MAX_CONTENT_LENGTH"] = 2000 * 1024 * 1024
 
 # Progress tracking
 progress_tracker = {}
+inference_semaphore = threading.Semaphore(MAX_CONCURRENT_INFERENCES)
 
 
 def get_audio_duration(file_path: str) -> float:
@@ -683,54 +775,62 @@ def transcribe_audio():
             text = text.replace(" '", "'")
             return text
 
-        for i, chunk_path in enumerate(chunk_paths):
-            progress_tracker[unique_id].update({
-                "current_chunk": i + 1,
-                "progress_percent": int((i + 1) / num_chunks * 100)
-            })
-            print(f"[{unique_id}] Transcribing chunk {i + 1}/{num_chunks}...")
+        print(
+            f"[{unique_id}] Waiting for inference slot "
+            f"({MAX_CONCURRENT_INFERENCES} max concurrent requests)..."
+        )
+        inference_semaphore.acquire()
+        try:
+            for i, chunk_path in enumerate(chunk_paths):
+                progress_tracker[unique_id].update({
+                    "current_chunk": i + 1,
+                    "progress_percent": int((i + 1) / num_chunks * 100)
+                })
+                print(f"[{unique_id}] Transcribing chunk {i + 1}/{num_chunks}...")
 
-            result = model_to_use.recognize(chunk_path)
+                result = model_to_use.recognize(chunk_path)
 
-            if result and result.text:
-                start_time = result.timestamps[0] if result.timestamps else 0
-                end_time = (
-                    result.timestamps[-1]
-                    if len(result.timestamps) > 1
-                    else start_time + 0.1
-                )
+                if result and result.text:
+                    start_time = result.timestamps[0] if result.timestamps else 0
+                    end_time = (
+                        result.timestamps[-1]
+                        if len(result.timestamps) > 1
+                        else start_time + 0.1
+                    )
 
-                cleaned_text = clean_text(result.text)
+                    cleaned_text = clean_text(result.text)
 
-                segment = {
-                    "start": start_time + cumulative_time_offset,
-                    "end": end_time + cumulative_time_offset,
-                    "segment": cleaned_text,
-                }
-                all_segments.append(segment)
-                
-                # Update partial text for real-time streaming
-                progress_tracker[unique_id]["partial_text"] += cleaned_text + " "
-
-                for j, (token, timestamp) in enumerate(
-                    zip(result.tokens, result.timestamps)
-                ):
-                    if j < len(result.timestamps) - 1:
-                        word_end = result.timestamps[j + 1]
-                    else:
-                        word_end = end_time
-
-                    # Clean tokens too
-                    clean_token = token.replace("\u2581", " ").strip()
-                    word = {
-                        "start": timestamp + cumulative_time_offset,
-                        "end": word_end + cumulative_time_offset,
-                        "word": clean_token,
+                    segment = {
+                        "start": start_time + cumulative_time_offset,
+                        "end": end_time + cumulative_time_offset,
+                        "segment": cleaned_text,
                     }
-                    all_words.append(word)
+                    all_segments.append(segment)
 
-            # Use planned chunk duration instead of ffprobe
-            cumulative_time_offset += chunk_durations[i]
+                    # Update partial text for real-time streaming
+                    progress_tracker[unique_id]["partial_text"] += cleaned_text + " "
+
+                    for j, (token, timestamp) in enumerate(
+                        zip(result.tokens, result.timestamps)
+                    ):
+                        if j < len(result.timestamps) - 1:
+                            word_end = result.timestamps[j + 1]
+                        else:
+                            word_end = end_time
+
+                        # Clean tokens too
+                        clean_token = token.replace("\u2581", " ").strip()
+                        word = {
+                            "start": timestamp + cumulative_time_offset,
+                            "end": word_end + cumulative_time_offset,
+                            "word": clean_token,
+                        }
+                        all_words.append(word)
+
+                # Use planned chunk duration instead of ffprobe
+                cumulative_time_offset += chunk_durations[i]
+        finally:
+            inference_semaphore.release()
 
         print(f"[{unique_id}] All chunks transcribed, merging results.")
         
@@ -819,6 +919,8 @@ if __name__ == "__main__":
     print(f"Starting server...")
     print(f"Web interface: http://127.0.0.1:{port}")
     print(f"API Endpoint: POST http://{host}:{port}/v1/audio/transcriptions")
+    print(f"ASR backend: {ASR_BACKEND}")
+    print(f"Max concurrent inferences: {MAX_CONCURRENT_INFERENCES}")
     print(f"Running with {threads} threads.")
     print(f"Starting web browser thread...")
     threading.Thread(target=openweb).start()

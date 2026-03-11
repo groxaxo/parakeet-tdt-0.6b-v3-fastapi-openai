@@ -1,0 +1,48 @@
+# Parakeet TDT 0.6B ONNX - OpenVINO Dockerfile
+# Optional Intel iGPU / OpenVINO deployment
+
+FROM python:3.10-slim
+
+LABEL maintainer="Parakeet TDT"
+LABEL description="ONNX-optimized speech transcription service (OpenVINO)"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+RUN useradd --create-home --shell /bin/bash parakeet
+WORKDIR /app
+
+COPY requirements.txt requirements.openvino.txt ./
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.openvino.txt
+
+COPY app.py .
+COPY templates/ templates/
+COPY parakeet.png .
+
+RUN mkdir -p temp_uploads models && \
+    chown -R parakeet:parakeet /app
+
+USER parakeet
+
+ENV HF_HOME=/app/models
+ENV HF_HUB_CACHE=/app/models
+ENV HF_HUB_DISABLE_SYMLINKS_WARNING=true
+ENV PYTHONUNBUFFERED=1
+ENV ASR_BACKEND=openvino
+ENV OV_DEVICE=GPU
+ENV OV_HINT=LATENCY
+ENV OV_EXECUTION_MODE=ACCURACY
+ENV MAX_CONCURRENT_INFERENCES=1
+
+EXPOSE 5092
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" || exit 1
+
+CMD ["python", "app.py"]

@@ -109,6 +109,11 @@ docker compose up parakeet-cpu -d
 docker compose up parakeet-gpu -d
 ```
 
+**Optional Intel iGPU / OpenVINO Deployment** (opt-in only, requires compatible Intel hardware and drivers):
+```bash
+docker compose --profile openvino up parakeet-openvino -d
+```
+
 The server will be available at `http://localhost:5092`. See [DOCKER.md](DOCKER.md) for more options.
 
 ---
@@ -125,6 +130,12 @@ cd parakeet-tdt-0.6b-v3-fastapi-openai
 pip install -r requirements.txt
 ```
 
+**Optional OpenVINO install path for Intel iGPU users:**
+```bash
+pip install -r requirements.openvino.txt
+ASR_BACKEND=openvino python app.py
+```
+
 ## Usage
 
 ### Start the Server
@@ -137,6 +148,23 @@ python app.py
 ```
 *   **Port**: 5092
 *   **Docs**: [http://127.0.0.1:5092/docs](http://127.0.0.1:5092/docs)
+
+### Backend Selection
+
+Runtime backend selection is controlled with environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5092` | HTTP listen port |
+| `WEB_THREADS` | `8` | Waitress worker thread count |
+| `ASR_BACKEND` | `auto` | `auto`, `cpu`, `cuda`, `tensorrt`, or `openvino` |
+| `MAX_CONCURRENT_INFERENCES` | backend-aware | Optional override for concurrent transcription requests |
+| `OV_DEVICE` | `GPU` | OpenVINO target device when `ASR_BACKEND=openvino` |
+| `OV_HINT` | `LATENCY` | OpenVINO performance hint when `ASR_BACKEND=openvino` |
+| `OV_EXECUTION_MODE` | `ACCURACY` | OpenVINO execution mode hint when `ASR_BACKEND=openvino` |
+| `OV_CACHE_DIR` | empty | Optional OpenVINO model cache directory |
+
+`ASR_BACKEND=auto` preserves the existing default provider priority: TensorRT → CUDA → CPU. OpenVINO is never selected automatically; it is only used when you explicitly set `ASR_BACKEND=openvino`.
 
 ### Client Example (Python)
 
