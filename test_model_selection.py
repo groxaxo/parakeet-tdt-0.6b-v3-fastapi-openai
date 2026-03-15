@@ -3,6 +3,15 @@
 Test script to verify model selection implementation.
 This tests the MODEL_CONFIGS, get_model function logic without loading actual models.
 """
+import ast
+from pathlib import Path
+
+
+APP_PATH = Path(__file__).with_name("app.py")
+
+
+def read_app_content():
+    return APP_PATH.read_text()
 
 def test_model_configs():
     """Test that MODEL_CONFIGS is properly structured"""
@@ -15,8 +24,7 @@ def test_model_configs():
     
     # Since we can't import app.py without triggering model loading,
     # we'll verify it by reading the file content
-    with open('app.py', 'r') as f:
-        content = f.read()
+    content = read_app_content()
     
     # Verify MODEL_CONFIGS structure exists
     assert 'MODEL_CONFIGS = {' in content
@@ -40,8 +48,7 @@ def test_model_configs():
 def test_model_fallback_logic():
     """Test the fallback logic when unknown model is requested"""
     # Read app.py to verify fallback logic
-    with open('app.py', 'r') as f:
-        content = f.read()
+    content = read_app_content()
     
     # Verify fallback is implemented
     assert 'if model_name not in MODEL_CONFIGS:' in content
@@ -55,8 +62,7 @@ def test_model_fallback_logic():
 
 def test_lazy_loading_caching():
     """Test that lazy loading and caching are implemented"""
-    with open('app.py', 'r') as f:
-        content = f.read()
+    content = read_app_content()
     
     # Verify model_cache exists
     assert 'model_cache = {}' in content
@@ -73,8 +79,7 @@ def test_lazy_loading_caching():
 
 def test_openai_compatibility():
     """Test OpenAI compatible parameter defaults"""
-    with open('app.py', 'r') as f:
-        content = f.read()
+    content = read_app_content()
     
     # Default model should be parakeet variant
     assert 'model", "parakeet-tdt-0.6b-v3"' in content
@@ -86,8 +91,56 @@ def test_openai_compatibility():
     print("✅ OpenAI compatibility test passed")
 
 
+def test_startup_backend_reporting():
+    """Test startup prints the active runtime backend, not a removed variable name"""
+    tree = ast.parse(read_app_content(), filename=str(APP_PATH))
+
+    for node in tree.body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
+            left = node.test.left
+            comparators = node.test.comparators
+            if (
+                isinstance(left, ast.Name)
+                and left.id == "__name__"
+                and comparators
+                and isinstance(comparators[0], ast.Constant)
+                and comparators[0].value == "__main__"
+            ):
+                break
+    else:
+        raise AssertionError("Could not find __main__ block in app.py")
+
+    backend_print_found = False
+    for stmt in node.body:
+        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+            continue
+        call = stmt.value
+        if not isinstance(call.func, ast.Name) or call.func.id != "print" or not call.args:
+            continue
+        arg = call.args[0]
+        if not isinstance(arg, ast.JoinedStr):
+            continue
+        text_parts = [
+            value.value for value in arg.values if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        ]
+        if "ASR backend: " not in "".join(text_parts):
+            continue
+        assert len(arg.values) >= 2, "Expected backend print to interpolate a variable"
+        formatted_value = arg.values[1]
+        assert isinstance(formatted_value, ast.FormattedValue)
+        assert isinstance(formatted_value.value, ast.Name)
+        assert formatted_value.value.id == "ACTIVE_BACKEND"
+        backend_print_found = True
+        break
+
+    assert backend_print_found, "Expected __main__ block to print the active backend"
+
+    print("✅ Startup backend reporting test passed")
+
+
 if __name__ == "__main__":
     test_model_configs()
     test_model_fallback_logic()
     test_openai_compatibility()
+    test_startup_backend_reporting()
     print("\n✅ All tests passed successfully!")

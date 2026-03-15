@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+      - copilot/**
+
+permissions:
+  contents: read
+
+jobs:
+  startup-and-config:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Verify Python files compile
+        run: python -m py_compile app.py test_model_selection.py test_backend_config.py
+
+      - name: Run lightweight startup/config tests
+        run: |
+          python test_model_selection.py
+          python test_backend_config.py

@@ -1,0 +1,9 @@
+onnx-asr[hub]>=0.10.0
+waitress>=3.0.0
+flask>=3.0.0
+openai>=1.0.0
+typing_extensions>=4.0.0
+psutil>=5.0.0
+requests>=2.0.0
+onnxruntime-openvino>=1.18.1
+numpy<2

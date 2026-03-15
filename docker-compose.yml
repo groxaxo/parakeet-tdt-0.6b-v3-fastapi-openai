@@ -46,6 +46,33 @@ services:
       retries: 3
       start_period: 120s
 
+  # Optional OpenVINO deployment for compatible Intel hardware
+  parakeet-openvino:
+    profiles: ["openvino"]
+    build:
+      context: .
+      dockerfile: Dockerfile.openvino
+    image: parakeet-tdt:openvino
+    container_name: parakeet-openvino
+    ports:
+      - "5092:5092"
+    volumes:
+      - parakeet-models:/app/models
+    environment:
+      ASR_BACKEND: openvino
+      OV_DEVICE: ${OV_DEVICE:-GPU}
+      OV_HINT: ${OV_HINT:-LATENCY}
+      OV_EXECUTION_MODE: ${OV_EXECUTION_MODE:-ACCURACY}
+      OV_CACHE_DIR: ${OV_CACHE_DIR:-}
+      MAX_CONCURRENT_INFERENCES: ${MAX_CONCURRENT_INFERENCES:-1}
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
 volumes:
   parakeet-models:
     name: parakeet-models
