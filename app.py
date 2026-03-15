@@ -100,12 +100,13 @@ def build_session_options(ort, backend, providers):
     web_threads = max(1, get_env_int("WEB_THREADS", 8))
     sess_options = ort.SessionOptions()
     sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
     if is_openvino_provider_selected(providers):
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
         sess_options.intra_op_num_threads = 1
         sess_options.inter_op_num_threads = 1
     else:
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         sess_options.intra_op_num_threads = max(1, web_threads // 2)
         sess_options.inter_op_num_threads = 1
 
@@ -942,7 +943,7 @@ if __name__ == "__main__":
     print(f"Starting server...")
     print(f"Web interface: http://127.0.0.1:{port}")
     print(f"API Endpoint: POST http://{host}:{port}/v1/audio/transcriptions")
-    print(f"ASR backend: {ASR_BACKEND}")
+    print(f"ASR backend: {ACTIVE_BACKEND}")
     print(f"Max concurrent inferences: {MAX_CONCURRENT_INFERENCES}")
     print(f"Running with {threads} threads.")
     print(f"Starting web browser thread...")

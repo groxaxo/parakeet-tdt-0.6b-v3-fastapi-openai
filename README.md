@@ -136,6 +136,8 @@ pip install -r requirements.openvino.txt
 ASR_BACKEND=openvino python app.py
 ```
 
+`requirements.openvino.txt` installs the ONNX Runtime OpenVINO execution provider, but some environments still require a full OpenVINO runtime installation and initialized environment variables before `OpenVINOExecutionProvider` is usable. Treat the OpenVINO path as host-dependent and verify it on the target Intel system.
+
 ## Usage
 
 ### Start the Server

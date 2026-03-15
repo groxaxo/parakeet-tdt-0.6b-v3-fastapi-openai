@@ -33,6 +33,9 @@ docker run -d --name parakeet-gpu -p 5092:5092 --gpus all \
 
 ### Optional OpenVINO Deployment (Compatible Intel Hardware)
 
+> [!WARNING]
+> The OpenVINO container path is still hardware-dependent. Installing `onnxruntime-openvino` is not always sufficient by itself; some systems also need a full OpenVINO runtime installation and initialized environment variables before `OpenVINOExecutionProvider` is available. Validate this flow on the target Intel host before relying on it in production.
+
 ```bash
 # Build and run with Docker Compose
 docker compose --profile openvino up parakeet-openvino -d

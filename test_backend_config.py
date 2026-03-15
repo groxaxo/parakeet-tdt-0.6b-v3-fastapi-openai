@@ -42,6 +42,7 @@ class FakeExecutionMode:
 
 class FakeGraphOptimizationLevel:
     ORT_ENABLE_ALL = "ORT_ENABLE_ALL"
+    ORT_DISABLE_ALL = "ORT_DISABLE_ALL"
 
 
 class FakeOrt:
@@ -174,6 +175,7 @@ def test_session_options_and_concurrency():
 
     assert ov_options.intra_op_num_threads == 1
     assert ov_options.inter_op_num_threads == 1
+    assert ov_options.graph_optimization_level == "ORT_DISABLE_ALL"
     assert get_default_concurrency("auto", 8) == 8
     assert get_default_concurrency("openvino", 8) == 1
     print("✅ session tuning and concurrency test passed")
