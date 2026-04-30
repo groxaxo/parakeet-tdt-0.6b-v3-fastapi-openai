@@ -28,6 +28,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy application code
 COPY app.py .
+COPY asgi_app.py .
+COPY realtime/ realtime/
+COPY static/ static/
 COPY templates/ templates/
 COPY parakeet.png .
 
@@ -52,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" || exit 1
 
 # Run the application
-CMD ["python", "app.py"]
+CMD ["uvicorn", "asgi_app:app", "--host", "0.0.0.0", "--port", "5092"]
