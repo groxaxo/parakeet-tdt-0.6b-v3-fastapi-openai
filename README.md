@@ -89,7 +89,13 @@ Additional benchmark on real-world YouTube content across multiple languages:
 *   Or: Python 3.10+ and [FFmpeg](https://ffmpeg.org/)
 
 ### CPU Optimization
-For hybrid CPUs (like Intel 12th-14th Gen), performance is significantly improved by pinning the process to Performance cores (P-cores).
+ONNX Runtime's CPU execution provider automatically dispatches AVX2/FMA kernels from the standard wheel when the host CPU supports them. The server now detects AVX2 at startup, reports the result in `/health`, and configures ONNX Runtime threading to use the available physical CPU cores while preventing NumPy/BLAS thread pools from competing with inference.
+
+For hybrid CPUs (like Intel 12th-14th Gen), performance is still improved by pinning the process to Performance cores (P-cores). You can also override the auto-tuned defaults:
+
+* `PARAKEET_ORT_INTRA_THREADS`: ONNX Runtime intra-op worker threads. Defaults to the detected physical CPU count within the container/affinity mask.
+* `PARAKEET_ORT_INTER_THREADS`: ONNX Runtime inter-op threads. Defaults to `1`, which is best for single-model inference.
+* `PARAKEET_WAITRESS_THREADS`: HTTP worker threads. Defaults to a conservative value to avoid oversubscribing ONNX Runtime's AVX2 worker pool.
 
 ## Installation
 
