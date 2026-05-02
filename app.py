@@ -11,6 +11,7 @@ SILENCE_SEARCH_WINDOW = 30.0  # Search window in seconds around target split poi
 SILENCE_DETECT_TIMEOUT = 300  # Timeout for silence detection in seconds
 MIN_SPLIT_GAP = 5.0  # Minimum gap between split points to prevent 0-length chunks
 MAX_WAITRESS_THREADS = 8
+WAITRESS_CPU_DIVISOR = 2
 
 import sys
 
@@ -99,6 +100,7 @@ CPU_OPTIMIZATION = {
     "fma_available": "fma" in CPU_FLAGS,
 }
 # Respect container CPU limits while avoiding hyperthread oversubscription by default.
+# The minimum handles hosts where cpuset grants fewer CPUs than the physical count.
 default_ort_intra_threads = min(
     CPU_OPTIMIZATION["physical_cpus"], CPU_OPTIMIZATION["available_logical_cpus"]
 )
@@ -111,7 +113,8 @@ CPU_OPTIMIZATION["ort_inter_op_threads"] = get_env_int(
 )
 # Cap HTTP workers separately from ORT workers to avoid oversubscribing AVX2 kernels.
 default_waitress_threads = min(
-    MAX_WAITRESS_THREADS, max(1, CPU_OPTIMIZATION["available_logical_cpus"] // 2)
+    MAX_WAITRESS_THREADS,
+    max(1, CPU_OPTIMIZATION["available_logical_cpus"] // WAITRESS_CPU_DIVISOR),
 )
 threads = get_env_int(
     "PARAKEET_WAITRESS_THREADS",
