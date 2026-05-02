@@ -39,7 +39,7 @@ if sys.platform == "win32":
     os.environ["PATH"] = ROOT_DIR + f";{ROOT_DIR}/ffmpeg;" + os.environ["PATH"]
 
 
-def _env_int(name: str, default: int, minimum: int = 1) -> int:
+def _get_env_int(name: str, default: int, minimum: int = 1) -> int:
     try:
         return max(minimum, int(os.environ.get(name, default)))
     except (TypeError, ValueError):
@@ -55,6 +55,11 @@ def _available_cpu_count() -> int:
 
 
 def _detect_cpu_flags() -> set:
+    """
+    Read CPU feature flags from /proc/cpuinfo on Linux.
+
+    Returns an empty set on non-Linux platforms or when CPU flags cannot be read.
+    """
     flags = set()
     if sys.platform.startswith("linux"):
         try:
@@ -76,14 +81,14 @@ CPU_OPTIMIZATION = {
     "avx2_available": "avx2" in CPU_FLAGS,
     "fma_available": "fma" in CPU_FLAGS,
 }
-CPU_OPTIMIZATION["ort_intra_op_threads"] = _env_int(
+CPU_OPTIMIZATION["ort_intra_op_threads"] = _get_env_int(
     "PARAKEET_ORT_INTRA_THREADS",
     min(CPU_OPTIMIZATION["physical_cpus"], CPU_OPTIMIZATION["available_logical_cpus"]),
 )
-CPU_OPTIMIZATION["ort_inter_op_threads"] = _env_int(
+CPU_OPTIMIZATION["ort_inter_op_threads"] = _get_env_int(
     "PARAKEET_ORT_INTER_THREADS", 1
 )
-threads = _env_int(
+threads = _get_env_int(
     "PARAKEET_WAITRESS_THREADS",
     min(8, max(1, CPU_OPTIMIZATION["available_logical_cpus"] // 2)),
 )
@@ -101,7 +106,8 @@ for _thread_env in (
     os.environ.setdefault(_thread_env, "1")
 
 
-def build_session_options():
+def build_session_options() -> "ort.SessionOptions":
+    """Build ONNX Runtime session options tuned for AVX2-capable CPU inference."""
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = CPU_OPTIMIZATION["ort_intra_op_threads"]
     sess_options.inter_op_num_threads = CPU_OPTIMIZATION["ort_inter_op_threads"]
@@ -113,7 +119,8 @@ def build_session_options():
     return sess_options
 
 
-def get_providers_to_try():
+def get_providers_to_try() -> tuple[list[str], list[str]]:
+    """Return available ONNX Runtime providers and the prioritized provider list."""
     available_providers = ort.get_available_providers()
     providers = []
     if "TensorrtExecutionProvider" in available_providers:
