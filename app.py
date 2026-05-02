@@ -47,8 +47,9 @@ def get_env_int(name: str, default: int, minimum: int = 1) -> int:
     try:
         return max(minimum, int(os.environ.get(name, default)))
     except (TypeError, ValueError):
-        print(f"⚠️ Invalid {name} value; using {default}")
-        return max(minimum, default)
+        fallback = max(minimum, default)
+        print(f"⚠️ Invalid {name} value; using {fallback}")
+        return fallback
 
 
 def _get_available_logical_cpus() -> int:
@@ -86,7 +87,6 @@ def _detect_cpu_flags() -> set[str]:
                     if line.lower().startswith("flags"):
                         _, value = line.split(":", 1)
                         flags.update(value.strip().lower().split())
-                        break
         except OSError:
             pass
     return flags
@@ -141,7 +141,7 @@ def build_session_options() -> ort.SessionOptions:
     sess_options.inter_op_num_threads = CPU_OPTIMIZATION["ort_inter_op_threads"]
     sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    # Flush denormal floats to zero to avoid slow scalar fallback paths.
+    # Flush denormal floats to zero to avoid AVX2/FMA performance penalties.
     sess_options.add_session_config_entry("session.set_denormal_as_zero", "1")
     # Keep intra-op workers hot for low-latency AVX2 kernels; avoid inter-op spinning.
     sess_options.add_session_config_entry("session.intra_op.allow_spinning", "1")
