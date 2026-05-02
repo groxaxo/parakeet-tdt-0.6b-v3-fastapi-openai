@@ -7,6 +7,17 @@
 
 This implementation achieves exceptional real-time speeds, outperforming standard [openai/whisper](https://github.com/openai/whisper) and competing directly with GPU-accelerated [faster-whisper](https://github.com/SYSTRAN/faster-whisper) implementations while running entirely on consumer CPUs. The efficiency is achieved through the architectural advantages of the Token-and-Duration Transducer (TDT) model combined with 8-bit quantization.
 
+## ⚡ Lower-latency WAV uploads
+
+The server now includes a faster request path for short PCM WAV uploads with no API changes required:
+
+- WAV duration is read directly from the WAV header instead of spawning `ffprobe`
+- Already-normalized **16 kHz mono PCM WAV** uploads skip FFmpeg conversion entirely
+- Short unchunked PCM WAV uploads can be decoded and resampled **in process** before being passed straight to ONNX Runtime
+- FFmpeg remains the fallback for unsupported, compressed, non-WAV, or chunked inputs
+
+On a 20-file English/Spanish Chatterbox WAV benchmark corpus, this reduced endpoint RTF from **0.0459** to **0.0379** and improved effective throughput from **21.80x** to **26.40x** real time, while keeping **20/20** correlation passes.
+
 ## 🌍 Multilingual Support
 
 **Parakeet TDT 0.6B v3** features robust multilingual capabilities with **automatic language detection**. The model can automatically identify and transcribe speech in any of the **25 supported languages** without requiring manual language specification:

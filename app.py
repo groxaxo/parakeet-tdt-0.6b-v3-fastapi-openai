@@ -15,11 +15,14 @@ import sys
 sys.stdout = sys.stderr
 
 import os, sys, json, math, re, threading
+import audioop
 import shutil
 import uuid
 import subprocess
 import datetime
+import wave
 import psutil
+import numpy as np
 from typing import List, Tuple, Optional
 from werkzeug.utils import secure_filename
 
@@ -196,6 +199,10 @@ progress_tracker = {}
 
 
 def get_audio_duration(file_path: str) -> float:
+    wav_info = get_wav_info(file_path)
+    if wav_info is not None:
+        return wav_info["duration"]
+
     command = [
         "ffprobe",
         "-v",
@@ -212,6 +219,58 @@ def get_audio_duration(file_path: str) -> float:
     except (subprocess.CalledProcessError, ValueError) as e:
         print(f"Could not get duration of file '{file_path}': {e}")
         return 0.0
+
+
+def get_wav_info(file_path: str) -> Optional[dict]:
+    try:
+        with wave.open(file_path, "rb") as wav_file:
+            frame_count = wav_file.getnframes()
+            sample_rate = wav_file.getframerate()
+            return {
+                "duration": frame_count / sample_rate if sample_rate else 0.0,
+                "sample_rate": sample_rate,
+                "channels": wav_file.getnchannels(),
+                "sample_width": wav_file.getsampwidth(),
+                "compression": wav_file.getcomptype(),
+            }
+    except (wave.Error, EOFError, OSError):
+        return None
+
+
+def load_pcm_wav_as_16k_float(file_path: str, wav_info: dict) -> Optional[np.ndarray]:
+    if wav_info["compression"] != "NONE":
+        return None
+
+    sample_width = wav_info["sample_width"]
+    channels = wav_info["channels"]
+    if sample_width not in (1, 2, 3, 4) or channels not in (1, 2):
+        return None
+
+    try:
+        with wave.open(file_path, "rb") as wav_file:
+            pcm = wav_file.readframes(wav_file.getnframes())
+
+        if channels == 2:
+            pcm = audioop.tomono(pcm, sample_width, 0.5, 0.5)
+            channels = 1
+
+        if wav_info["sample_rate"] != 16000:
+            pcm, _ = audioop.ratecv(
+                pcm, sample_width, channels, wav_info["sample_rate"], 16000, None
+            )
+
+        if sample_width == 1:
+            return (np.frombuffer(pcm, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+        if sample_width == 2:
+            return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+        if sample_width == 4:
+            return np.frombuffer(pcm, dtype="<i4").astype(np.float32) / 2147483648.0
+
+        pcm_16 = audioop.lin2lin(pcm, sample_width, 2)
+        return np.frombuffer(pcm_16, dtype="<i2").astype(np.float32) / 32768.0
+    except (wave.Error, EOFError, OSError, audioop.error, ValueError) as e:
+        print(f"Could not load WAV in process, falling back to FFmpeg: {e}")
+        return None
 
 
 def detect_silence_points(
@@ -590,32 +649,65 @@ def transcribe_audio():
         file.save(temp_original_path)
         temp_files_to_clean.append(temp_original_path)
 
-        print(
-            f"[{unique_id}] Converting '{original_filename}' to standard WAV format..."
-        )
-        ffmpeg_command = [
-            "ffmpeg",
-            "-nostdin",
-            "-y",
-            "-i",
-            temp_original_path,
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            target_wav_path,
-        ]
-        result = subprocess.run(ffmpeg_command, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"FFmpeg error: {result.stderr}")
-            return (
-                jsonify({"error": "File conversion failed", "details": result.stderr}),
-                500,
-            )
-        temp_files_to_clean.append(target_wav_path)
-
         CHUNK_DURATION_SECONDS = CHUNK_MINUTE * 60
-        total_duration = get_audio_duration(target_wav_path)
+        wav_info = get_wav_info(temp_original_path)
+        direct_waveform = (
+            load_pcm_wav_as_16k_float(temp_original_path, wav_info)
+            if wav_info is not None and wav_info["duration"] <= CHUNK_DURATION_SECONDS
+            else None
+        )
+        can_use_original_wav = (
+            wav_info is not None
+            and wav_info["sample_rate"] == 16000
+            and wav_info["channels"] == 1
+            and wav_info["compression"] == "NONE"
+        )
+
+        if can_use_original_wav:
+            print(
+                f"[{unique_id}] Using uploaded WAV directly "
+                f"({wav_info['duration']:.2f}s, 16 kHz mono)."
+            )
+            target_wav_path = temp_original_path
+        elif direct_waveform is not None:
+            print(
+                f"[{unique_id}] Loaded PCM WAV in process "
+                f"({wav_info['duration']:.2f}s, {wav_info['sample_rate']} Hz -> 16 kHz)."
+            )
+        else:
+            print(
+                f"[{unique_id}] Converting '{original_filename}' to standard WAV format..."
+            )
+            ffmpeg_command = [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                temp_original_path,
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                target_wav_path,
+            ]
+            result = subprocess.run(ffmpeg_command, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"FFmpeg error: {result.stderr}")
+                return (
+                    jsonify({"error": "File conversion failed", "details": result.stderr}),
+                    500,
+                )
+            temp_files_to_clean.append(target_wav_path)
+
+        total_duration = (
+            wav_info["duration"]
+            if direct_waveform is not None
+            else get_audio_duration(target_wav_path)
+        )
         if total_duration == 0:
             return jsonify({"error": "Cannot process audio with 0 duration"}), 400
 
@@ -686,6 +778,8 @@ def transcribe_audio():
                     "ffmpeg",
                     "-nostdin",
                     "-y",
+                    "-loglevel",
+                    "error",
                     "-ss",
                     str(start_time),
                     "-t",
@@ -704,7 +798,7 @@ def transcribe_audio():
                 if result.returncode != 0:
                     print(f"Warning: Chunk extraction failed: {result.stderr}")
         else:
-            chunk_paths.append(target_wav_path)
+            chunk_paths.append(direct_waveform if direct_waveform is not None else target_wav_path)
 
         all_segments = []
         all_words = []
