@@ -54,7 +54,11 @@ def _get_available_logical_cpus() -> int:
     try:
         return len(os.sched_getaffinity(0))
     except (AttributeError, OSError):
-        return os.cpu_count() or 1
+        cpu_count = os.cpu_count()
+        if cpu_count is None:
+            print("⚠️ Could not determine logical CPU count; using 1")
+            return 1
+        return cpu_count
 
 
 def _physical_cpu_count() -> int:
@@ -74,7 +78,9 @@ def _detect_cpu_flags() -> set[str]:
     flags = set()
     if sys.platform.startswith("linux"):
         try:
-            with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as cpuinfo:
+            with open(
+                "/proc/cpuinfo", "r", encoding="utf-8", errors="replace"
+            ) as cpuinfo:
                 for line in cpuinfo:
                     if line.lower().startswith("flags"):
                         _, value = line.split(":", 1)
@@ -92,9 +98,13 @@ CPU_OPTIMIZATION = {
     "avx2_available": "avx2" in CPU_FLAGS,
     "fma_available": "fma" in CPU_FLAGS,
 }
+# Respect container CPU limits while avoiding hyperthread oversubscription by default.
+default_ort_intra_threads = min(
+    CPU_OPTIMIZATION["physical_cpus"], CPU_OPTIMIZATION["available_logical_cpus"]
+)
 CPU_OPTIMIZATION["ort_intra_op_threads"] = get_env_int(
     "PARAKEET_ORT_INTRA_THREADS",
-    min(CPU_OPTIMIZATION["physical_cpus"], CPU_OPTIMIZATION["available_logical_cpus"]),
+    default_ort_intra_threads,
 )
 CPU_OPTIMIZATION["ort_inter_op_threads"] = get_env_int(
     "PARAKEET_ORT_INTER_THREADS", 1
@@ -128,7 +138,9 @@ def build_session_options() -> ort.SessionOptions:
     sess_options.inter_op_num_threads = CPU_OPTIMIZATION["ort_inter_op_threads"]
     sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    # Flush denormal floats to zero to avoid slow scalar fallback paths.
     sess_options.add_session_config_entry("session.set_denormal_as_zero", "1")
+    # Keep intra-op workers hot for low-latency AVX2 kernels; avoid inter-op spinning.
     sess_options.add_session_config_entry("session.intra_op.allow_spinning", "1")
     sess_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
     return sess_options
