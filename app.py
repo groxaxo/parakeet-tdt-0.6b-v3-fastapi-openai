@@ -8,6 +8,7 @@ SILENCE_MIN_DURATION = 0.5  # Minimum silence duration in seconds
 SILENCE_SEARCH_WINDOW = 30.0  # Search window in seconds around target split point
 SILENCE_DETECT_TIMEOUT = 300  # Timeout for silence detection in seconds
 MIN_SPLIT_GAP = 5.0  # Minimum gap between split points to prevent 0-length chunks
+MAX_WAITRESS_THREADS = 8
 
 import sys
 
@@ -54,6 +55,14 @@ def _available_cpu_count() -> int:
         return os.cpu_count() or 1
 
 
+def _physical_cpu_count() -> int:
+    cpu_count = psutil.cpu_count(logical=False)
+    if cpu_count and cpu_count > 0:
+        return cpu_count
+    print("⚠️ Could not determine physical CPU count; using available logical CPUs")
+    return _available_cpu_count()
+
+
 def _detect_cpu_flags() -> set:
     """
     Read CPU feature flags from /proc/cpuinfo on Linux.
@@ -77,7 +86,7 @@ def _detect_cpu_flags() -> set:
 CPU_FLAGS = _detect_cpu_flags()
 CPU_OPTIMIZATION = {
     "available_logical_cpus": _available_cpu_count(),
-    "physical_cpus": psutil.cpu_count(logical=False) or _available_cpu_count(),
+    "physical_cpus": _physical_cpu_count(),
     "avx2_available": "avx2" in CPU_FLAGS,
     "fma_available": "fma" in CPU_FLAGS,
 }
@@ -90,7 +99,7 @@ CPU_OPTIMIZATION["ort_inter_op_threads"] = _get_env_int(
 )
 threads = _get_env_int(
     "PARAKEET_WAITRESS_THREADS",
-    min(8, max(1, CPU_OPTIMIZATION["available_logical_cpus"] // 2)),
+    min(MAX_WAITRESS_THREADS, max(1, CPU_OPTIMIZATION["available_logical_cpus"] // 2)),
 )
 
 # Keep non-ORT numeric libraries from creating competing thread pools. ONNX Runtime's
@@ -170,8 +179,11 @@ try:
         f"ORT inter_op={CPU_OPTIMIZATION['ort_inter_op_threads']}, "
         f"Waitress threads={threads}"
     )
-    if not CPU_OPTIMIZATION["avx2_available"] and sys.platform.startswith("linux"):
-        print("⚠️ AVX2 was not detected; CPU inference will use a slower ONNX Runtime path")
+    if not CPU_OPTIMIZATION["avx2_available"]:
+        print(
+            "⚠️ AVX2 was not detected from CPU flags; CPU inference may use a slower "
+            "ONNX Runtime path"
+        )
 
     # Load default INT8 model at startup
     print("\nLoading default Parakeet TDT 0.6B V3 ONNX model with INT8 quantization...")
