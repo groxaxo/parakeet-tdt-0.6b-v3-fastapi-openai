@@ -26,12 +26,28 @@ Compared to the legacy Flask+Waitress service on a 12700KF CPU:
 | 300 s file (single)     | 17.96 s / 15.7×   | **10.41 s / 27.2×**| **+73%** |
 | 16× 10 s concurrent     | 34.6× throughput  | **39.3× throughput**| +13%    |
 
+With CUDA enabled on an RTX 3090, the fastest stable profile measured was
+FP32 + GPU micro-batching:
+
+| Workload                | CPU optimized      | GPU profile        | Δ        |
+|-------------------------|--------------------|--------------------|----------|
+| 300 s file (single)     | 10.41 s / 27.2×    | **1.37 s / 205.9×**| **+7.6×** |
+| 16× 10 s concurrent     | 39.3× throughput   | **200.3× throughput**| **+5.1×** |
+
 See [OPTIMIZATION.md](OPTIMIZATION.md) for the full benchmark, design
 rationale, and tunable env knobs.
 
 ```bash
 python server.py                  # serve on :5092
-# GPU users:  PARAKEET_USE_GPU=true PARAKEET_BATCHED=1 python server.py
+
+# Fastest measured RTX 3090 profile
+PARAKEET_USE_GPU=true \
+PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
+PARAKEET_BATCHED=1 \
+PARAKEET_MAX_BATCH_SIZE=4 \
+PARAKEET_BATCH_WINDOW_MS=4 \
+PARAKEET_ORT_INTRA_THREADS=1 \
+python server.py
 ```
 
 ## ⚡ Lower-latency WAV uploads

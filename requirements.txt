@@ -8,5 +8,5 @@ requests>=2.0.0
 onnxruntime>=1.18.1
 numpy<2
 
-# Optional GPU support (uncomment if you have NVIDIA GPU)
-# onnxruntime-gpu>=1.18.1
+# Optional GPU support. Install in the conda env used for CUDA serving.
+# Validated GPU benchmark version: onnxruntime-gpu==1.26.0

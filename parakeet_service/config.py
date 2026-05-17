@@ -34,7 +34,12 @@ MODEL_CONFIGS = {
         "description": "FP16",
     },
 }
-DEFAULT_MODEL = "parakeet-tdt-0.6b-v3"
+_DEFAULT_MODEL_ENV = os.getenv("PARAKEET_DEFAULT_MODEL", "parakeet-tdt-0.6b-v3").lower()
+DEFAULT_MODEL = (
+    _DEFAULT_MODEL_ENV
+    if _DEFAULT_MODEL_ENV in MODEL_CONFIGS
+    else "parakeet-tdt-0.6b-v3"
+)
 
 # ---------------------------------------------------------------------------
 # Performance knobs

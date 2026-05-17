@@ -15,8 +15,32 @@ new FastAPI service inspired by `parakeet-flash`. On a single i7-12700KF
 
 > RTFx = audio_seconds / wall_seconds (higher is better).
 
-The biggest win is on long files: parallel Silero‑VAD chunking + a fan-out
+The biggest CPU win is on long files: parallel Silero‑VAD chunking + a fan-out
 inference pool turn a 5-minute clip from 18 s of inference into 10 s.
+
+With `onnxruntime-gpu==1.26.0` installed in the same conda env and CUDA
+provider binding validated from the live ORT sessions, the best stable RTX
+3090 profile was FP32 + GPU micro-batching:
+
+| Workload                | CPU optimized      | GPU profile        | Δ        |
+|-------------------------|--------------------|--------------------|----------|
+| 10 s file (single)      | 0.661 s / 15.2×    | **0.058 s / 174.4×**| +11.5×  |
+| 60 s file (single)      | 3.02 s / 18.7×     | **0.229 s / 246.9×**| +13.2×  |
+| **300 s file (single)** | 10.41 s / 27.2×    | **1.37 s / 205.9×** | **+7.6×** |
+| 16× 10 s concurrent     | 39.3× throughput   | **200.3× throughput** | **+5.1×** |
+
+Recommended GPU command:
+
+```bash
+PARAKEET_USE_GPU=true \
+PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
+PARAKEET_BATCHED=1 \
+PARAKEET_MAX_BATCH_SIZE=4 \
+PARAKEET_BATCH_WINDOW_MS=4 \
+PARAKEET_ORT_INTRA_THREADS=1 \
+PARAKEET_AUDIO_WORKERS=8 \
+python server.py
+```
 
 ## Method
 
@@ -37,6 +61,7 @@ changing code" and "identify bottlenecks with evidence":
    - Cross-request micro-batching (`recognize([w1..wN])`).
    - Parallel single-item inference pool (`InferencePool`).
    - Pin to P-cores only via `taskset`.
+  - GPU provider setup and model/worker/batch sweeps on RTX 3090.
 
 ## Findings
 
@@ -59,6 +84,14 @@ changing code" and "identify bottlenecks with evidence":
 - **FastAPI + uvicorn**: removes Flask's per-thread blocking model and
   makes the audio pipeline async-friendly without changing the
   OpenAI-compatible response shape.
+- **CUDA preload + provider validation** (`parakeet_service/model.py`):
+  `onnxruntime-gpu` can list `CUDAExecutionProvider` even when the provider
+  later fails to load cuDNN. The loader now calls `ort.preload_dlls()` and,
+  when `PARAKEET_USE_GPU=true`, raises if the live encoder/decoder sessions
+  do not actually bind to CUDA/TensorRT first.
+- **GPU micro-batching**: on RTX 3090 the fastest stable profile was FP32
+  model `istupakov/parakeet-tdt-0.6b-v3-onnx` with `PARAKEET_BATCHED=1`,
+  `PARAKEET_MAX_BATCH_SIZE=4`, and `PARAKEET_BATCH_WINDOW_MS=4`.
 
 ### What did NOT work (and why)
 
@@ -76,6 +109,12 @@ changing code" and "identify bottlenecks with evidence":
   39.3× to 33.4×. Restricting affinity also blocks ORT's lightweight
   ops and audio I/O from spilling onto the 4 E-cores. Kept the script
   available for users who want predictability but it is not the default.
+- **INT8 on CUDA**: the default CPU INT8 model is a poor CUDA target. It
+  bound to CUDA after preload, but measured only about 8.6× RTFx on the
+  300 s file and 8.7× concurrent throughput. Use it on CPU, not GPU.
+- **FP32 pool with 4 workers under sustained concurrent load**: one-shot
+  concurrency looked very fast, but the repeated finalist run hit CUDA OOM
+  and produced zero successful concurrent requests. Avoid that profile.
 
 ## Architecture
 
@@ -110,6 +149,7 @@ All optional. Defaults are tuned for an 8-core CPU.
 |----------------------------|--------------|----------------------------------------------------------|
 | `PARAKEET_HOST`            | `0.0.0.0`    | bind host                                                |
 | `PARAKEET_PORT`            | `5092`       | bind port (matches the legacy service)                   |
+| `PARAKEET_DEFAULT_MODEL`   | `parakeet-tdt-0.6b-v3` | default OpenAI model when form field is omitted |
 | `PARAKEET_INFER_WORKERS`   | `4`          | parallel ORT workers in `InferencePool`                  |
 | `PARAKEET_BATCHED`         | `0`          | `1` → use `BatchWorker` (recommended for GPU only)        |
 | `PARAKEET_USE_GPU`         | `auto`       | `auto` / `true` / `false`                                |
@@ -122,8 +162,8 @@ All optional. Defaults are tuned for an 8-core CPU.
 | `PARAKEET_VAD_SPEECH_PAD_MS` | `120`      | pad around speech segments                               |
 | `PARAKEET_MAX_BATCH_SIZE`  | `16`         | max batch (only used when `PARAKEET_BATCHED=1`)          |
 | `PARAKEET_BATCH_WINDOW_MS` | `8`          | batch collection window                                  |
-| `PARAKEET_ORT_INTRA`       | physical cores | ORT intra-op threads                                   |
-| `PARAKEET_ORT_INTER`       | `1`          | ORT inter-op threads                                     |
+| `PARAKEET_ORT_INTRA_THREADS` | physical cores | ORT intra-op threads                                 |
+| `PARAKEET_ORT_INTER_THREADS` | `1`        | ORT inter-op threads                                     |
 | `PARAKEET_AUDIO_WORKERS`   | `min(8, physical)` | audio decode/chunk worker pool                     |
 
 ## Running
@@ -134,10 +174,22 @@ conda create -n parakeet-v3 python=3.11 -y
 conda activate parakeet-v3
 pip install -r requirements.txt
 
+# Optional CUDA path, installed only in the benchmark env used for GPU tests
+pip install onnxruntime-gpu==1.26.0
+
 # Run
 python server.py
 # or pinned to P-cores (NOT recommended on this hardware, see Findings)
 ./pin_pcores.sh python server.py
+
+# Fastest measured RTX 3090 profile
+PARAKEET_USE_GPU=true \
+PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
+PARAKEET_BATCHED=1 \
+PARAKEET_MAX_BATCH_SIZE=4 \
+PARAKEET_BATCH_WINDOW_MS=4 \
+PARAKEET_ORT_INTRA_THREADS=1 \
+python server.py
 ```
 
 ## Reproducing the benchmark
@@ -152,12 +204,26 @@ python bench.py --url http://127.0.0.1:5092/v1/audio/transcriptions \
 The bench corpus uses three real audio files (10 s, 60 s, 300 s) and
 measures sequential mean/p50/p95 plus concurrent wall-clock throughput.
 
+## GPU sweep highlights
+
+All rows below were validated from live ORT session providers with CUDA first.
+The final rows use `--sequential-n 3`; earlier exploratory sweeps used one
+sequential run per duration.
+
+| Profile | 10 s | 60 s | 300 s | 16×10 s throughput | Notes |
+|---------|------|------|-------|--------------------|-------|
+| FP32 batch b4/w4ms (final) | 174.4× | 246.9× | **205.9×** | **200.3×** | best stable overall |
+| FP16 batch b4/w2ms (final) | **221.4×** | **509.5×** | 143.0× | 91.0× | best short/medium single request |
+| FP16 pool w4 (exploratory) | 217.0× | 337.3× | 134.7× | 109.7× | simple low-risk GPU profile |
+| FP32 pool w4 (exploratory) | 197.1× | 228.6× | 100.3× | 244.3× | OOMed under final concurrent repeat |
+| INT8 pool w1 on CUDA | 8.8× | 8.9× | 8.6× | 8.7× | avoid on GPU |
+
 ## Future work
 
-- **GPU path**: the host has 3× RTX 3090 + 1× RTX 3060 idle. Installing
-  `onnxruntime-gpu` and starting with
-  `PARAKEET_USE_GPU=true PARAKEET_BATCHED=1` should comfortably exceed
-  100× RTFx; not benchmarked in this pass.
+- **Multi-GPU serving**: the host has 3× RTX 3090 + 1× RTX 3060. The current
+  service intentionally binds one ORT model to one CUDA device. Running one
+  uvicorn process per GPU behind a local load balancer should scale aggregate
+  throughput further.
 - **Word-level timestamps**: currently exposed via
   `timestamp_granularities[]=word` and returned by the underlying
   `onnx_asr` model — would benefit from an alignment pass for long
