@@ -39,3 +39,7 @@ nohup.out
 # IDE
 .idea/
 .vscode/
+
+logs/
+__pycache__/
+*.pyc

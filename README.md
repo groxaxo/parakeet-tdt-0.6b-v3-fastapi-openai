@@ -7,6 +7,33 @@
 
 This implementation achieves exceptional real-time speeds, outperforming standard [openai/whisper](https://github.com/openai/whisper) and competing directly with GPU-accelerated [faster-whisper](https://github.com/SYSTRAN/faster-whisper) implementations while running entirely on consumer CPUs. The efficiency is achieved through the architectural advantages of the Token-and-Duration Transducer (TDT) model combined with 8-bit quantization.
 
+## 🚀 Optimized FastAPI service (v2)
+
+A refactored async service lives under [`parakeet_service/`](parakeet_service/)
+and is started via [`server.py`](server.py). It keeps the OpenAI-compatible
+contract of the legacy [`app.py`](app.py) but adds:
+
+- In-process audio decode (single `ffmpeg` per request, none per chunk)
+- **Silero-VAD auto-chunking** that splits long files on pause midpoints
+- **Parallel `InferencePool`** that fans-out single-item ORT calls across
+  multiple threads — both for concurrent requests and for the chunks of
+  one long request
+
+Compared to the legacy Flask+Waitress service on a 12700KF CPU:
+
+| Workload                | Legacy            | Optimized          | Δ        |
+|-------------------------|-------------------|--------------------|----------|
+| 300 s file (single)     | 17.96 s / 15.7×   | **10.41 s / 27.2×**| **+73%** |
+| 16× 10 s concurrent     | 34.6× throughput  | **39.3× throughput**| +13%    |
+
+See [OPTIMIZATION.md](OPTIMIZATION.md) for the full benchmark, design
+rationale, and tunable env knobs.
+
+```bash
+python server.py                  # serve on :5092
+# GPU users:  PARAKEET_USE_GPU=true PARAKEET_BATCHED=1 python server.py
+```
+
 ## ⚡ Lower-latency WAV uploads
 
 The server now includes a faster request path for short PCM WAV uploads with no API changes required:
