@@ -22,11 +22,16 @@ WORKDIR /app
 # Copy requirements first for layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies. requirements.txt is GPU-first, so the CPU image
+# swaps onnxruntime-gpu for onnxruntime.
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    grep -v '^onnxruntime-gpu' requirements.txt > /tmp/requirements.cpu.txt && \
+    pip install --no-cache-dir -r /tmp/requirements.cpu.txt && \
+    pip install --no-cache-dir onnxruntime==1.26.0
 
 # Copy application code
+COPY server.py .
+COPY parakeet_service/ parakeet_service/
 COPY app.py .
 COPY templates/ templates/
 COPY parakeet.png .
@@ -43,6 +48,9 @@ ENV HF_HOME=/app/models
 ENV HF_HUB_CACHE=/app/models
 ENV HF_HUB_DISABLE_SYMLINKS_WARNING=true
 ENV PYTHONUNBUFFERED=1
+ENV PARAKEET_USE_GPU=false
+ENV PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3
+ENV PARAKEET_BATCHED=0
 
 # Expose the API port
 EXPOSE 5092
@@ -52,4 +60,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" || exit 1
 
 # Run the application
-CMD ["python", "app.py"]
+CMD ["python", "server.py"]

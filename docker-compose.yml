@@ -1,32 +1,21 @@
 version: '3.8'
 
 services:
-  # CPU-only deployment (default)
-  parakeet-cpu:
-    build:
-      context: .
-      dockerfile: Dockerfile.cpu
-    image: parakeet-tdt:cpu
-    container_name: parakeet-cpu
-    ports:
-      - "5092:5092"
-    volumes:
-      - parakeet-models:/app/models
-    restart: unless-stopped
-    healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # GPU deployment (requires NVIDIA Container Toolkit)
+  # GPU deployment (default; requires NVIDIA Container Toolkit)
   parakeet-gpu:
     build:
       context: .
       dockerfile: Dockerfile.gpu
     image: parakeet-tdt:gpu
     container_name: parakeet-gpu
+    environment:
+      PARAKEET_USE_GPU: "true"
+      PARAKEET_DEFAULT_MODEL: istupakov/parakeet-tdt-0.6b-v3-onnx
+      PARAKEET_BATCHED: "1"
+      PARAKEET_MAX_BATCH_SIZE: "4"
+      PARAKEET_BATCH_WINDOW_MS: "4"
+      PARAKEET_ORT_INTRA_THREADS: "1"
+      PARAKEET_AUDIO_WORKERS: "8"
     ports:
       - "5092:5092"
     volumes:
@@ -45,6 +34,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+
+  # CPU-only deployment (explicit profile)
+  parakeet-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: parakeet-tdt:cpu
+    container_name: parakeet-cpu
+    profiles: ["cpu"]
+    environment:
+      PARAKEET_USE_GPU: "false"
+      PARAKEET_DEFAULT_MODEL: parakeet-tdt-0.6b-v3
+      PARAKEET_BATCHED: "0"
+    ports:
+      - "5092:5092"
+    volumes:
+      - parakeet-models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 volumes:
   parakeet-models:

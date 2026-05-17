@@ -19,8 +19,8 @@ The biggest CPU win is on long files: parallel Silero‑VAD chunking + a fan-out
 inference pool turn a 5-minute clip from 18 s of inference into 10 s.
 
 With `onnxruntime-gpu==1.26.0` installed in the same conda env and CUDA
-provider binding validated from the live ORT sessions, the best stable RTX
-3090 profile was FP32 + GPU micro-batching:
+provider binding validated from the live ORT sessions, the default backend is
+now the best stable RTX 3090 profile: FP32 + GPU micro-batching.
 
 | Workload                | CPU optimized      | GPU profile        | Δ        |
 |-------------------------|--------------------|--------------------|----------|
@@ -29,7 +29,7 @@ provider binding validated from the live ORT sessions, the best stable RTX
 | **300 s file (single)** | 10.41 s / 27.2×    | **1.37 s / 205.9×** | **+7.6×** |
 | 16× 10 s concurrent     | 39.3× throughput   | **200.3× throughput** | **+5.1×** |
 
-Recommended GPU command:
+Default GPU command:
 
 ```bash
 PARAKEET_USE_GPU=true \
@@ -39,6 +39,16 @@ PARAKEET_MAX_BATCH_SIZE=4 \
 PARAKEET_BATCH_WINDOW_MS=4 \
 PARAKEET_ORT_INTRA_THREADS=1 \
 PARAKEET_AUDIO_WORKERS=8 \
+python server.py
+```
+
+CPU override:
+
+```bash
+PARAKEET_USE_GPU=false \
+PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3 \
+PARAKEET_BATCHED=0 \
+PARAKEET_ORT_INTRA_THREADS=12 \
 python server.py
 ```
 
@@ -149,10 +159,10 @@ All optional. Defaults are tuned for an 8-core CPU.
 |----------------------------|--------------|----------------------------------------------------------|
 | `PARAKEET_HOST`            | `0.0.0.0`    | bind host                                                |
 | `PARAKEET_PORT`            | `5092`       | bind port (matches the legacy service)                   |
-| `PARAKEET_DEFAULT_MODEL`   | `parakeet-tdt-0.6b-v3` | default OpenAI model when form field is omitted |
-| `PARAKEET_INFER_WORKERS`   | `4`          | parallel ORT workers in `InferencePool`                  |
-| `PARAKEET_BATCHED`         | `0`          | `1` → use `BatchWorker` (recommended for GPU only)        |
-| `PARAKEET_USE_GPU`         | `auto`       | `auto` / `true` / `false`                                |
+| `PARAKEET_DEFAULT_MODEL`   | `istupakov/parakeet-tdt-0.6b-v3-onnx` | default OpenAI model when form field is omitted |
+| `PARAKEET_INFER_WORKERS`   | `4`          | parallel ORT workers in `InferencePool` when `PARAKEET_BATCHED=0` |
+| `PARAKEET_BATCHED`         | `1`          | `1` → use GPU-friendly `BatchWorker`; set `0` for CPU INT8 |
+| `PARAKEET_USE_GPU`         | `true`       | `true` / `auto` / `false`                                |
 | `PARAKEET_GPU_DEVICE_ID`   | `0`          | CUDA device for ORT                                      |
 | `PARAKEET_CHUNK_TARGET_SEC`| `60`         | preferred chunk length                                   |
 | `PARAKEET_CHUNK_MAX_SEC`   | `75`         | hard cap before force-cut; ≤ this skips chunking         |
@@ -160,9 +170,9 @@ All optional. Defaults are tuned for an 8-core CPU.
 | `PARAKEET_VAD_THRESHOLD`   | `0.5`        | Silero-VAD speech probability                            |
 | `PARAKEET_VAD_MIN_SILENCE_MS` | `400`     | min silence between chunks                               |
 | `PARAKEET_VAD_SPEECH_PAD_MS` | `120`      | pad around speech segments                               |
-| `PARAKEET_MAX_BATCH_SIZE`  | `16`         | max batch (only used when `PARAKEET_BATCHED=1`)          |
-| `PARAKEET_BATCH_WINDOW_MS` | `8`          | batch collection window                                  |
-| `PARAKEET_ORT_INTRA_THREADS` | physical cores | ORT intra-op threads                                 |
+| `PARAKEET_MAX_BATCH_SIZE`  | `4`          | max batch (only used when `PARAKEET_BATCHED=1`)          |
+| `PARAKEET_BATCH_WINDOW_MS` | `4`          | batch collection window                                  |
+| `PARAKEET_ORT_INTRA_THREADS` | `1` for GPU, physical cores for CPU override | ORT intra-op threads |
 | `PARAKEET_ORT_INTER_THREADS` | `1`        | ORT inter-op threads                                     |
 | `PARAKEET_AUDIO_WORKERS`   | `min(8, physical)` | audio decode/chunk worker pool                     |
 
@@ -182,7 +192,7 @@ python server.py
 # or pinned to P-cores (NOT recommended on this hardware, see Findings)
 ./pin_pcores.sh python server.py
 
-# Fastest measured RTX 3090 profile
+# Default RTX 3090 profile
 PARAKEET_USE_GPU=true \
 PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
 PARAKEET_BATCHED=1 \

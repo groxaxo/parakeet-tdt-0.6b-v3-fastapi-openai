@@ -26,8 +26,8 @@ Compared to the legacy Flask+Waitress service on a 12700KF CPU:
 | 300 s file (single)     | 17.96 s / 15.7×   | **10.41 s / 27.2×**| **+73%** |
 | 16× 10 s concurrent     | 34.6× throughput  | **39.3× throughput**| +13%    |
 
-With CUDA enabled on an RTX 3090, the fastest stable profile measured was
-FP32 + GPU micro-batching:
+The default backend is now the fastest stable RTX 3090 profile measured:
+FP32 + CUDA + GPU micro-batching.
 
 | Workload                | CPU optimized      | GPU profile        | Δ        |
 |-------------------------|--------------------|--------------------|----------|
@@ -40,13 +40,10 @@ rationale, and tunable env knobs.
 ```bash
 python server.py                  # serve on :5092
 
-# Fastest measured RTX 3090 profile
-PARAKEET_USE_GPU=true \
-PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
-PARAKEET_BATCHED=1 \
-PARAKEET_MAX_BATCH_SIZE=4 \
-PARAKEET_BATCH_WINDOW_MS=4 \
-PARAKEET_ORT_INTRA_THREADS=1 \
+# CPU override
+PARAKEET_USE_GPU=false \
+PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3 \
+PARAKEET_BATCHED=0 \
 python server.py
 ```
 

@@ -1,13 +1,8 @@
 """Inference pool for the optimized Parakeet v3 service.
 
-CPU INT8 ORT batched `recognize([N])` scales close to linear in time, so
-cross-request batching is *counter-productive* on CPU. Instead we maintain a
-small pool of inference threads, each running a single `recognize(wav)` call
-in parallel. With `intra_op_num_threads` tuned to `physical_cores / pool_size`
-we avoid thread-pool contention.
-
-For GPU users (`PARAKEET_BATCHED=1`), micro-batching is re-enabled because
-batched ORT-CUDA inference is much faster than serial batch-1 calls.
+The default deployment is GPU-backed and uses cross-request micro-batching.
+For CPU INT8 deployments, set `PARAKEET_BATCHED=0`; batched `recognize([N])`
+scales close to linear in time on CPU and is counter-productive there.
 """
 from __future__ import annotations
 import asyncio
@@ -22,7 +17,7 @@ import numpy as np
 from .config import MAX_BATCH_SIZE, BATCH_WINDOW_MS, logger
 
 INFER_WORKERS = int(os.getenv("PARAKEET_INFER_WORKERS", "4"))
-BATCHED = os.getenv("PARAKEET_BATCHED", "0") == "1"
+BATCHED = os.getenv("PARAKEET_BATCHED", "1") == "1"
 
 
 @dataclass

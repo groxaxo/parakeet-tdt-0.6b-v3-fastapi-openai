@@ -21,12 +21,12 @@ MODEL_CONFIGS = {
     "parakeet-tdt-0.6b-v3": {
         "hf_id": "nemo-parakeet-tdt-0.6b-v3",
         "quantization": "int8",
-        "description": "INT8 (fastest)",
+        "description": "INT8 CPU profile",
     },
     "istupakov/parakeet-tdt-0.6b-v3-onnx": {
         "hf_id": "istupakov/parakeet-tdt-0.6b-v3-onnx",
         "quantization": None,
-        "description": "FP32",
+        "description": "FP32 GPU default profile",
     },
     "grikdotnet/parakeet-tdt-0.6b-fp16": {
         "hf_id": "grikdotnet/parakeet-tdt-0.6b-fp16",
@@ -34,11 +34,14 @@ MODEL_CONFIGS = {
         "description": "FP16",
     },
 }
-_DEFAULT_MODEL_ENV = os.getenv("PARAKEET_DEFAULT_MODEL", "parakeet-tdt-0.6b-v3").lower()
+GPU_DEFAULT_MODEL = "istupakov/parakeet-tdt-0.6b-v3-onnx"
+CPU_DEFAULT_MODEL = "parakeet-tdt-0.6b-v3"
+
+_DEFAULT_MODEL_ENV = os.getenv("PARAKEET_DEFAULT_MODEL", GPU_DEFAULT_MODEL).lower()
 DEFAULT_MODEL = (
     _DEFAULT_MODEL_ENV
     if _DEFAULT_MODEL_ENV in MODEL_CONFIGS
-    else "parakeet-tdt-0.6b-v3"
+    else GPU_DEFAULT_MODEL
 )
 
 # ---------------------------------------------------------------------------
@@ -56,13 +59,14 @@ VAD_THRESHOLD = float(os.getenv("PARAKEET_VAD_THRESHOLD", "0.5"))
 VAD_MIN_SILENCE_MS = int(os.getenv("PARAKEET_VAD_MIN_SILENCE_MS", "400"))
 VAD_SPEECH_PAD_MS = int(os.getenv("PARAKEET_VAD_SPEECH_PAD_MS", "120"))
 
-# Micro-batch worker
-MAX_BATCH_SIZE = int(os.getenv("PARAKEET_MAX_BATCH_SIZE", "16"))
-BATCH_WINDOW_MS = float(os.getenv("PARAKEET_BATCH_WINDOW_MS", "8"))
-
 # Providers
-USE_GPU = os.getenv("PARAKEET_USE_GPU", "auto").lower()  # auto|true|false
+USE_GPU = os.getenv("PARAKEET_USE_GPU", "true").lower()  # auto|true|false
 GPU_DEVICE_ID = int(os.getenv("PARAKEET_GPU_DEVICE_ID", "0"))
+
+# Micro-batch worker. The default is the validated RTX 3090 GPU profile;
+# CPU deployments should set PARAKEET_BATCHED=0 and PARAKEET_USE_GPU=false.
+MAX_BATCH_SIZE = int(os.getenv("PARAKEET_MAX_BATCH_SIZE", "4"))
+BATCH_WINDOW_MS = float(os.getenv("PARAKEET_BATCH_WINDOW_MS", "4"))
 
 
 def _get_env_int(name: str, default: int, minimum: int = 1) -> int:
@@ -85,7 +89,7 @@ try:
 except Exception:
     _physical = _available_logical
 
-DEFAULT_INTRA = min(_physical, _available_logical)
+DEFAULT_INTRA = 1 if USE_GPU != "false" else min(_physical, _available_logical)
 ORT_INTRA_THREADS = _get_env_int("PARAKEET_ORT_INTRA_THREADS", DEFAULT_INTRA)
 ORT_INTER_THREADS = _get_env_int("PARAKEET_ORT_INTER_THREADS", 1)
 
