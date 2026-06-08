@@ -1,6 +1,6 @@
 # Parakeet TDT Transcription with ONNX Runtime
 
-[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/release/python-3100/)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-31115/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Parakeet TDT** is a high-performance implementation of NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model using [ONNX Runtime](https://onnxruntime.ai/), designed for ultra-fast inference on CPU.
@@ -137,7 +137,7 @@ Additional benchmark on real-world YouTube content across multiple languages:
 ## Requirements
 
 *   [Docker](https://docs.docker.com/get-docker/) (Recommended)
-*   Or: Python 3.10+ and [FFmpeg](https://ffmpeg.org/)
+*   Or: Python 3.11+ and [FFmpeg](https://ffmpeg.org/)
 
 ### CPU Optimization
 ONNX Runtime's CPU execution provider automatically dispatches AVX2/FMA kernels from the standard wheel when the host CPU supports them. The server now detects AVX2 at startup, reports the result in `/health`, and configures ONNX Runtime threading to use the available physical CPU cores while preventing NumPy/BLAS thread pools from competing with inference.
@@ -175,7 +175,7 @@ The server will be available at `http://localhost:5092`. See [DOCKER.md](DOCKER.
 For development or customization:
 
 ```bash
-conda create -n parakeet-onnx python=3.10
+conda create -n parakeet-onnx python=3.11
 conda activate parakeet-onnx
 git clone https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai
 cd parakeet-tdt-0.6b-v3-fastapi-openai
