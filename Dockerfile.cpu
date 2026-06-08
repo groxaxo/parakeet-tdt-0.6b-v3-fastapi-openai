@@ -1,7 +1,7 @@
 # Parakeet TDT 0.6B ONNX - CPU Dockerfile
 # High-performance speech transcription on CPU
 
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 LABEL maintainer="Parakeet TDT"
 LABEL description="ONNX-optimized speech transcription service (CPU)"

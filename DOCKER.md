@@ -68,7 +68,7 @@ docker volume rm parakeet-models
 
 | File | Description |
 |------|-------------|
-| `Dockerfile.cpu` | CPU-only image (Python 3.10 slim) |
+| `Dockerfile.cpu` | CPU-only image (Python 3.11 slim) |
 | `Dockerfile.gpu` | NVIDIA CUDA 12.1 image with GPU support |
 | `docker-compose.yml` | Orchestration for both variants |
 | `.dockerignore` | Excludes unnecessary files from build |

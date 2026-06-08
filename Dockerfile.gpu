@@ -9,14 +9,14 @@ LABEL description="ONNX-optimized speech transcription service (GPU/CUDA)"
 # Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies and Python 3.10
+# Install system dependencies and Python 3.11
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 \
-    python3.10-venv \
+    python3.11 \
+    python3.11-venv \
     python3-pip \
     ffmpeg \
-    && ln -sf /usr/bin/python3.10 /usr/bin/python \
-    && ln -sf /usr/bin/python3.10 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
