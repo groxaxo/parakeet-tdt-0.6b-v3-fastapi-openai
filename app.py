@@ -617,7 +617,7 @@ def openapi_spec():
                 "description": "High-performance ONNX-optimized speech transcription API compatible with OpenAI.",
                 "version": "1.0.0",
             },
-            "servers": [{"url": "http://100.85.200.51:5092"}],
+            "servers": [{"url": "/"}],
             "paths": {
                 "/v1/audio/transcriptions": {
                     "post": {
