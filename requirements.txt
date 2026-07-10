@@ -9,8 +9,8 @@ openai>=1.0.0
 typing_extensions>=4.0.0
 psutil>=5.0.0
 requests>=2.0.0
-onnxruntime-gpu==1.26.0
+onnxruntime-gpu[cuda,cudnn]==1.23.2
 numpy<2
 
-# CPU-only deployments can replace onnxruntime-gpu with onnxruntime and run with:
+# CPU-only deployments replace onnxruntime-gpu with onnxruntime and run with:
 # PARAKEET_USE_GPU=false PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3 PARAKEET_BATCHED=0

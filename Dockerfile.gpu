@@ -1,15 +1,13 @@
 # Parakeet TDT 0.6B ONNX - GPU Dockerfile
 # High-performance speech transcription with NVIDIA CUDA
 
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
 LABEL maintainer="Parakeet TDT"
 LABEL description="ONNX-optimized speech transcription service (GPU/CUDA)"
 
-# Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies and Python 3.10
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3.10-venv \
@@ -20,41 +18,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Create non-root user for security
 RUN useradd --create-home --shell /bin/bash parakeet
 WORKDIR /app
 
-# Copy requirements first for layer caching
+# requirements.txt is the single dependency source of truth. The ONNX Runtime
+# [cuda,cudnn] extra installs matching runtime libraries; model.py explicitly
+# preloads those wheels before creating CUDA sessions, avoiding system cuDNN
+# major-version mismatches.
 COPY requirements.txt .
-
-# Install Python dependencies with GPU support
-# Replace onnxruntime with onnxruntime-gpu
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir onnx-asr[hub]>=0.10.0 \
-    waitress>=3.0.0 \
-    flask>=3.0.0 \
-    openai>=1.0.0 \
-    typing_extensions>=4.0.0 \
-    psutil>=5.0.0 \
-    requests>=2.0.0 \
-    onnxruntime-gpu>=1.18.1 \
-    "numpy<2"
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY server.py .
 COPY parakeet_service/ parakeet_service/
 COPY app.py .
 COPY templates/ templates/
 COPY parakeet.png .
 
-# Create directories for runtime
 RUN mkdir -p temp_uploads models && \
     chown -R parakeet:parakeet /app
 
-# Switch to non-root user
 USER parakeet
 
-# Environment variables
 ENV HF_HOME=/app/models
 ENV HF_HUB_CACHE=/app/models
 ENV HF_HUB_DISABLE_SYMLINKS_WARNING=true
@@ -69,12 +54,9 @@ ENV PARAKEET_BATCH_WINDOW_MS=4
 ENV PARAKEET_ORT_INTRA_THREADS=1
 ENV PARAKEET_AUDIO_WORKERS=8
 
-# Expose the API port
 EXPOSE 5092
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/healthz')" || exit 1
 
-# Run the application
 CMD ["python", "server.py"]

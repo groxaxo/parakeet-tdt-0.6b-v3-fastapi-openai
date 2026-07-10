@@ -6,44 +6,36 @@ FROM python:3.10-slim
 LABEL maintainer="Parakeet TDT"
 LABEL description="ONNX-optimized speech transcription service (CPU)"
 
-# Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Create non-root user for security
 RUN useradd --create-home --shell /bin/bash parakeet
 WORKDIR /app
 
-# Copy requirements first for layer caching
 COPY requirements.txt .
 
-# Install Python dependencies. requirements.txt is GPU-first, so the CPU image
-# swaps onnxruntime-gpu for onnxruntime.
+# Keep the API/runtime dependency set identical to the GPU image, replacing
+# only the execution-provider wheel with the Python-3.10-compatible CPU build.
 RUN pip install --no-cache-dir --upgrade pip && \
     grep -v '^onnxruntime-gpu' requirements.txt > /tmp/requirements.cpu.txt && \
     pip install --no-cache-dir -r /tmp/requirements.cpu.txt && \
-    pip install --no-cache-dir onnxruntime==1.26.0
+    pip install --no-cache-dir onnxruntime==1.23.2
 
-# Copy application code
 COPY server.py .
 COPY parakeet_service/ parakeet_service/
 COPY app.py .
 COPY templates/ templates/
 COPY parakeet.png .
 
-# Create directories for runtime
 RUN mkdir -p temp_uploads models && \
     chown -R parakeet:parakeet /app
 
-# Switch to non-root user
 USER parakeet
 
-# Environment variables
 ENV HF_HOME=/app/models
 ENV HF_HUB_CACHE=/app/models
 ENV HF_HUB_DISABLE_SYMLINKS_WARNING=true
@@ -52,12 +44,9 @@ ENV PARAKEET_USE_GPU=false
 ENV PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3
 ENV PARAKEET_BATCHED=0
 
-# Expose the API port
 EXPOSE 5092
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/healthz')" || exit 1
 
-# Run the application
 CMD ["python", "server.py"]

@@ -1,162 +1,192 @@
-"""Auto-chunking based on speech-pause / sentence-boundary detection.
-
-Uses Silero VAD (ONNX backend, no torch needed) to find low-energy speech
-boundaries and produces chunks of ~CHUNK_TARGET_SEC seconds that always cut
-on a silence boundary. This is the *intelligent* chunker the baseline tries
-to do with `ffmpeg silencedetect`, but ~10x faster and without subprocesses.
-"""
+"""Pause-aware audio chunking with strict size invariants."""
 from __future__ import annotations
+
+import threading
 from typing import List, Tuple
 
-import numpy as np
-
 from .config import (
-    TARGET_SR,
-    CHUNK_TARGET_SEC,
     CHUNK_MAX_SEC,
     CHUNK_MIN_SEC,
-    VAD_THRESHOLD,
+    CHUNK_TARGET_SEC,
+    TARGET_SR,
     VAD_MIN_SILENCE_MS,
     VAD_SPEECH_PAD_MS,
+    VAD_THRESHOLD,
     logger,
 )
 
-_vad_model = None  # lazy init
+import numpy as np
+
+Range = Tuple[int, int]
+_vad_model = None
+_vad_init_lock = threading.Lock()
+_vad_infer_lock = threading.Lock()
 
 
 def _get_vad():
     global _vad_model
-    if _vad_model is None:
+    if _vad_model is not None:
+        return _vad_model
+    with _vad_init_lock:
+        if _vad_model is not None:
+            return _vad_model
         try:
             from silero_vad import load_silero_vad  # type: ignore
+
             _vad_model = load_silero_vad(onnx=True)
             logger.info("Loaded Silero VAD (ONNX backend)")
         except Exception as exc:
-            logger.warning("Silero VAD unavailable (%s); falling back to energy VAD", exc)
+            logger.warning(
+                "Silero VAD unavailable (%s); falling back to energy VAD", exc
+            )
             _vad_model = "energy"
     return _vad_model
 
 
-# ---------------------------------------------------------------------------
-# Pause detection
-# ---------------------------------------------------------------------------
-def _silero_speech_segments(wav: np.ndarray) -> List[Tuple[int, int]]:
-    """Return list of (start_sample, end_sample) speech spans."""
+def _silero_speech_segments(wav: np.ndarray) -> List[Range]:
+    """Return speech spans as half-open sample ranges."""
     model = _get_vad()
     if model == "energy":
         return _energy_speech_segments(wav)
+
     from silero_vad import get_speech_timestamps  # type: ignore
-    import torch  # silero-vad pulls torch even for onnx mode; lightweight here
+    import torch
 
-    # Silero VAD wants a torch tensor
-    t = torch.from_numpy(wav)
-    ts = get_speech_timestamps(
-        t,
-        model,
-        sampling_rate=TARGET_SR,
-        threshold=VAD_THRESHOLD,
-        min_silence_duration_ms=VAD_MIN_SILENCE_MS,
-        speech_pad_ms=VAD_SPEECH_PAD_MS,
-        return_seconds=False,
-    )
-    return [(int(t["start"]), int(t["end"])) for t in ts]
+    tensor = torch.from_numpy(wav)
+    # Silero resets internal state during timestamp extraction, so serialize
+    # access to the shared singleton model across preprocessing threads.
+    with _vad_infer_lock:
+        timestamps = get_speech_timestamps(
+            tensor,
+            model,
+            sampling_rate=TARGET_SR,
+            threshold=VAD_THRESHOLD,
+            min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+            speech_pad_ms=VAD_SPEECH_PAD_MS,
+            return_seconds=False,
+        )
+    return [(int(item["start"]), int(item["end"])) for item in timestamps]
 
 
-def _energy_speech_segments(wav: np.ndarray) -> List[Tuple[int, int]]:
-    """Cheap RMS-based fallback if Silero isn't installed."""
-    frame = int(0.02 * TARGET_SR)  # 20 ms frames
-    if frame <= 0 or wav.size < frame:
-        return [(0, wav.size)]
-    n = wav.size // frame
-    framed = wav[: n * frame].reshape(n, frame)
+def _energy_speech_segments(wav: np.ndarray) -> List[Range]:
+    """Cheap RMS-based fallback when Silero is unavailable."""
+    frame = max(1, int(0.02 * TARGET_SR))
+    if wav.size < frame:
+        return [(0, wav.size)] if np.any(np.abs(wav) > 1e-4) else []
+
+    frame_count = wav.size // frame
+    framed = wav[: frame_count * frame].reshape(frame_count, frame)
     rms = np.sqrt((framed * framed).mean(axis=1) + 1e-12)
-    thr = max(1e-3, rms.mean() * 0.4)
-    voiced = rms > thr
-    segs: List[Tuple[int, int]] = []
-    i = 0
-    min_sil = max(1, int(VAD_MIN_SILENCE_MS / 20))
-    while i < n:
-        if voiced[i]:
-            start = i
-            j = i
-            sil = 0
-            while j < n:
-                if voiced[j]:
-                    sil = 0
-                else:
-                    sil += 1
-                    if sil >= min_sil:
-                        break
-                j += 1
-            end = min(j - sil, n)
-            segs.append((start * frame, end * frame))
-            i = j
+    threshold = max(1e-3, float(rms.mean()) * 0.4)
+    voiced = rms > threshold
+    minimum_silence_frames = max(1, int(VAD_MIN_SILENCE_MS / 20))
+
+    segments: List[Range] = []
+    index = 0
+    while index < frame_count:
+        if not voiced[index]:
+            index += 1
+            continue
+        start = index
+        cursor = index
+        silence = 0
+        while cursor < frame_count:
+            if voiced[cursor]:
+                silence = 0
+            else:
+                silence += 1
+                if silence >= minimum_silence_frames:
+                    break
+            cursor += 1
+        end = max(start + 1, min(cursor - silence, frame_count))
+        segments.append((start * frame, min(end * frame, wav.size)))
+        index = max(cursor, index + 1)
+    return segments
+
+
+def _normalize_segments(segments: List[Range], total: int) -> List[Range]:
+    normalized: List[Range] = []
+    for start, end in sorted(segments):
+        start = min(total, max(0, int(start)))
+        end = min(total, max(start, int(end)))
+        if end <= start:
+            continue
+        if normalized and start <= normalized[-1][1]:
+            previous_start, previous_end = normalized[-1]
+            normalized[-1] = (previous_start, max(previous_end, end))
         else:
-            i += 1
-    return segs or [(0, wav.size)]
+            normalized.append((start, end))
+    return normalized
 
 
-# ---------------------------------------------------------------------------
-# Chunk packer
-# ---------------------------------------------------------------------------
-def auto_chunk(wav: np.ndarray) -> List[Tuple[int, int]]:
-    """Pack speech segments into ~target-length chunks aligned on pauses.
+def _split_oversized(start: int, end: int, target: int, maximum: int) -> List[Range]:
+    """Split one non-empty range while guaranteeing every part <= maximum."""
+    if end <= start:
+        return []
+    parts: List[Range] = []
+    cursor = start
+    while end - cursor > maximum:
+        cut = min(end, cursor + target)
+        if cut <= cursor:
+            cut = min(end, cursor + maximum)
+        parts.append((cursor, cut))
+        cursor = cut
+    if end > cursor:
+        parts.append((cursor, end))
+    return parts
 
-    Returns list of (start_sample, end_sample) ranges in the original
-    waveform. If `wav` is shorter than CHUNK_MAX_SEC, returns a single chunk.
+
+def auto_chunk(wav: np.ndarray) -> List[Range]:
+    """Return ordered, non-empty, bounded ranges in the original waveform.
+
+    Short clips bypass VAD. Long clips with no detected speech return no ranges,
+    allowing the API to skip expensive ASR inference for silence.
     """
-    total = wav.size
-    if total <= int(CHUNK_MAX_SEC * TARGET_SR):
+    total = int(wav.size)
+    if total <= 0:
+        return []
+
+    target = max(1, int(CHUNK_TARGET_SEC * TARGET_SR))
+    maximum = max(target, int(CHUNK_MAX_SEC * TARGET_SR))
+    minimum = max(0, int(CHUNK_MIN_SEC * TARGET_SR))
+    if total <= maximum:
         return [(0, total)]
 
-    target = int(CHUNK_TARGET_SEC * TARGET_SR)
-    max_len = int(CHUNK_MAX_SEC * TARGET_SR)
-    min_len = int(CHUNK_MIN_SEC * TARGET_SR)
+    segments = _normalize_segments(_silero_speech_segments(wav), total)
+    if not segments:
+        return []
 
-    segs = _silero_speech_segments(wav)
-    if not segs:
-        # Pure silence — emit a single chunk; ASR will just produce empty text.
-        return [(0, total)]
-
-    chunks: List[Tuple[int, int]] = []
-    cur_start = segs[0][0]
-    cur_end = segs[0][1]
-    for s, e in segs[1:]:
-        # If adding this segment keeps us under target, extend
-        if e - cur_start <= target:
-            cur_end = e
+    packed: List[Range] = []
+    current_start, current_end = segments[0]
+    for start, end in segments[1:]:
+        if end - current_start <= target:
+            current_end = end
             continue
-        # If we're already past min and the next segment would push us beyond
-        # max, cut here on the trailing silence (between cur_end and s).
-        if (cur_end - cur_start) >= min_len:
-            mid = (cur_end + s) // 2  # middle of the pause
-            chunks.append((cur_start, mid))
-            cur_start = mid
-            cur_end = e
+
+        if current_end - current_start >= minimum:
+            cut = min(total, max(current_end, (current_end + start) // 2))
+            if cut > current_start:
+                packed.append((current_start, cut))
+            current_start = cut
+            current_end = end
         else:
-            cur_end = e
-            # If we've blown past max_len without finding a pause, force-cut
-            if (cur_end - cur_start) >= max_len:
-                chunks.append((cur_start, cur_end))
-                cur_start = e
-                cur_end = e
-    # Tail
-    chunks.append((cur_start, max(cur_end, cur_start + 1)))
+            current_end = end
 
-    # Guard: very long final chunk → split on time
-    out: List[Tuple[int, int]] = []
-    for cs, ce in chunks:
-        if ce - cs <= max_len:
-            out.append((cs, ce))
-            continue
-        # Force time-based split for the overflow
-        cursor = cs
-        while ce - cursor > max_len:
-            out.append((cursor, cursor + target))
-            cursor += target
-        out.append((cursor, ce))
-    return out
+    if current_end > current_start:
+        packed.append((current_start, current_end))
+
+    output: List[Range] = []
+    for start, end in packed:
+        output.extend(_split_oversized(start, end, target, maximum))
+
+    # Defensive invariant filter: malformed VAD output must never reach ORT.
+    return [
+        (start, end)
+        for start, end in output
+        if 0 <= start < end <= total and end - start <= maximum
+    ]
 
 
-def slice_chunks(wav: np.ndarray, ranges: List[Tuple[int, int]]) -> List[np.ndarray]:
-    return [wav[s:e].copy() for s, e in ranges]
+def slice_chunks(wav: np.ndarray, ranges: List[Range]) -> List[np.ndarray]:
+    """Return zero-copy contiguous views for the selected ranges."""
+    return [wav[start:end] for start, end in ranges if end > start]
