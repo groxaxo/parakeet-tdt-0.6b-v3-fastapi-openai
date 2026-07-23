@@ -126,6 +126,32 @@ changing code" and "identify bottlenecks with evidence":
   concurrency looked very fast, but the repeated finalist run hit CUDA OOM
   and produced zero successful concurrent requests. Avoid that profile.
 
+### RTX 3060 end-to-end YouTube audio
+
+A separate GPU benchmark used the FP32
+`istupakov/parakeet-tdt-0.6b-v3-onnx` model with ONNX Runtime 1.23.2 and CUDA
+on an RTX 3060 12 GB. The host CPU was an i7-4790 (4 cores / 8 threads) with
+32 GB RAM. Four complete MP3 tracks downloaded with `yt-dlp` were submitted
+individually to `/v1/audio/transcriptions`.
+
+| Language | Audio seconds | Request seconds | RTF | Speed |
+|----------|--------------:|----------------:|----:|------:|
+| Spanish | 446.3 | 6.221 | 0.0139 | 71.7× |
+| French | 441.7 | 5.837 | 0.0132 | 75.7× |
+| German | 704.4 | 9.302 | 0.0132 | 75.7× |
+| English | 2,112.7 | 29.132 | 0.0138 | 72.5× |
+| **Aggregate** | **3,705.1** | **50.492** | **0.0136** | **73.4×** |
+
+Request time was measured at the client and includes local HTTP transfer,
+MP3 decoding, VAD, chunk scheduling, inference, and response serialization.
+RTF is request time divided by audio duration. The aggregate row is calculated
+from total request time divided by total audio duration.
+
+A separate warm-path microbenchmark submitted the same 29.84-second 16 kHz
+PCM WAV five times. Median latency was 0.181 seconds (RTF 0.0061, approximately
+165× real time). It is not directly comparable to the long-form MP3 benchmark
+because it avoids compressed-audio decoding and long-file chunk scheduling.
+
 ## Architecture
 
 ```

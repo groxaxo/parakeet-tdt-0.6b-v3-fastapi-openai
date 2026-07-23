@@ -47,6 +47,36 @@ PARAKEET_BATCHED=0 \
 python server.py
 ```
 
+### RTX 3060 real-world YouTube benchmark
+
+The optimized service was also measured on a modest desktop with an Intel
+Core i7-4790 (4 cores / 8 threads), an NVIDIA GeForce RTX 3060 12 GB, and
+32 GB of system memory. The FP32
+`istupakov/parakeet-tdt-0.6b-v3-onnx` model ran through ONNX Runtime 1.23.2
+with the CUDA execution provider.
+
+Four complete audio tracks downloaded with `yt-dlp` were submitted to the
+OpenAI-compatible endpoint as MP3 files. Wall-clock timing includes the local
+HTTP upload, MP3 decoding, VAD, chunking, GPU inference, and response
+serialization.
+
+| Language | Audio duration | Request time | RTF | Real-time speed |
+|----------|---------------:|-------------:|----:|----------------:|
+| Spanish  | 446.3 s (7:26)  | 6.221 s      | 0.0139 | 71.7× |
+| French   | 441.7 s (7:22)  | 5.837 s      | 0.0132 | 75.7× |
+| German   | 704.4 s (11:44) | 9.302 s      | 0.0132 | 75.7× |
+| English  | 2,112.7 s (35:13) | 29.132 s  | 0.0138 | 72.5× |
+| **Total** | **3,705.1 s (61:45)** | **50.492 s** | **0.0136** | **73.4×** |
+
+For short-file latency, a warm 29.84-second 16 kHz PCM WAV request completed
+in a median of 0.181 seconds across five consecutive runs: **RTF 0.0061, or
+approximately 165× real time**. This synthetic WAV result is reported
+separately because it avoids MP3 decoding and long-file VAD/chunk scheduling.
+
+RTF is wall-clock processing time divided by audio duration, so lower is
+better. Real-time speed is its inverse. These are single-host measurements,
+not concurrent throughput results.
+
 ## ⚡ Lower-latency WAV uploads
 
 The server now includes a faster request path for short PCM WAV uploads with no API changes required:
