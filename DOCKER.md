@@ -2,9 +2,11 @@
 
 This document covers Docker deployment options for Parakeet TDT transcription service.
 
+GPU images now install TensorRT 10.9 and use an FP16 encoder with a CUDA FP32 decoder. The initial engine build can take several minutes; the health-check grace period is ten minutes. Persist `/app/models` for cached engines. Check `/health` → `runtime` to verify TensorRT rather than CUDA fallback. Set `PARAKEET_GPU_BACKEND=cuda` for an explicit rollback. CPU images exclude TensorRT and CUDA dependencies.
+
 ## Quick Start
 
-### CPU Deployment (Recommended for most users)
+### CPU Deployment (explicit alternative)
 
 ```bash
 # Build and run
@@ -15,7 +17,7 @@ docker build -f Dockerfile.cpu -t parakeet-tdt:cpu .
 docker run -d --name parakeet -p 5092:5092 -v parakeet-models:/app/models parakeet-tdt:cpu
 ```
 
-### GPU Deployment (Requires NVIDIA GPU)
+### GPU Deployment (default; requires NVIDIA GPU)
 
 **Prerequisites:**
 - NVIDIA GPU with CUDA support

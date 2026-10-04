@@ -1,51 +1,46 @@
-# Parakeet TDT Transcription with ONNX Runtime
+# Parakeet TDT Transcription with TensorRT and ONNX Runtime
 
-[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+OpenAI-compatible speech recognition using NVIDIA [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), with 25 supported languages, punctuation, and timestamps.
 
-**Parakeet TDT** is a high-performance implementation of NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model using [ONNX Runtime](https://onnxruntime.ai/), designed for ultra-fast inference on CPU.
+## Default GPU backend: TensorRT FP16 encoder
 
-This implementation achieves exceptional real-time speeds, outperforming standard [openai/whisper](https://github.com/openai/whisper) and competing directly with GPU-accelerated [faster-whisper](https://github.com/SYSTRAN/faster-whisper) implementations while running entirely on consumer CPUs. The efficiency is achieved through the architectural advantages of the Token-and-Duration Transducer (TDT) model combined with 8-bit quantization.
+`server.py` defaults to **TensorRT mixed-FP16 encoder + CUDA FP32 decoder** using the existing `istupakov/parakeet-tdt-0.6b-v3-onnx` model ID. The model weights and API model name have not changed. CPU INT8 and explicit CUDA FP32 execution remain available. `app.py` is the legacy CPU-oriented server; use `server.py` for TensorRT.
 
-## 🚀 Optimized FastAPI service (v2)
+On an RTX 3060 12 GB, a paired 50-clip clean-English trial measured:
 
-A refactored async service lives under [`parakeet_service/`](parakeet_service/)
-and is started via [`server.py`](server.py). It keeps the OpenAI-compatible
-contract of the legacy [`app.py`](app.py) but adds:
+| Runtime | Warm speed | Word error rate | Additional sampled peak GPU memory |
+| --- | ---: | ---: | ---: |
+| CUDA FP32 | 128.80× real time | 3.53% | 3.06 GiB |
+| TensorRT FP16 encoder + CUDA FP32 decoder | 159.76× real time | 3.53% | 1.93 GiB |
 
-- In-process audio decode (single `ffmpeg` per request, none per chunk)
-- **Silero-VAD auto-chunking** that splits long files on pause midpoints
-- **Parallel `InferencePool`** that fans-out single-item ORT calls across
-  multiple threads — both for concurrent requests and for the chunks of
-  one long request
-
-Compared to the legacy Flask+Waitress service on a 12700KF CPU:
-
-| Workload                | Legacy            | Optimized          | Δ        |
-|-------------------------|-------------------|--------------------|----------|
-| 300 s file (single)     | 17.96 s / 15.7×   | **10.41 s / 27.2×**| **+73%** |
-| 16× 10 s concurrent     | 34.6× throughput  | **39.3× throughput**| +13%    |
-
-The default backend is now the fastest stable RTX 3090 profile measured:
-FP32 + CUDA + GPU micro-batching.
-
-| Workload                | CPU optimized      | GPU profile        | Δ        |
-|-------------------------|--------------------|--------------------|----------|
-| 300 s file (single)     | 10.41 s / 27.2×    | **1.37 s / 205.9×**| **+7.6×** |
-| 16× 10 s concurrent     | 39.3× throughput   | **200.3× throughput**| **+5.1×** |
-
-See [OPTIMIZATION.md](OPTIMIZATION.md) for the full benchmark, design
-rationale, and tunable env knobs.
+All 50 transcripts were identical. This is a five-minute, single-speaker smoke test, not a multilingual accuracy guarantee. See [the measured trial](docs/tensorrt-trial.md) for methods and limitations. Historical CPU/3090 results below concern different hardware and configurations.
 
 ```bash
-python server.py                  # serve on :5092
+python -m pip install -r requirements.txt
+python server.py                  # :5092, TensorRT preferred
 
-# CPU override
-PARAKEET_USE_GPU=false \
-PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3 \
-PARAKEET_BATCHED=0 \
-python server.py
+# Explicit CUDA rollback (also restores larger default chunk sizes)
+PARAKEET_GPU_BACKEND=cuda python server.py
+
+# CPU override (see Dockerfile.cpu for installation without GPU dependencies)
+PARAKEET_USE_GPU=false PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3 python server.py
 ```
+
+The first launch builds a GPU/version-specific engine and can take several minutes. Engines persist under `models/tensorrt/`; keep that volume across container restarts. Missing TensorRT libraries or a failed engine build trigger a logged CUDA fallback. `/health` reports the **actual** backend, session providers, encoder precision, and any fallback reason under `runtime`.
+
+TensorRT defaults to one inference worker and a batch-1 encoder. The batch HTTP API still accepts multiple files; encoder work is serialized. Long recordings are split near pauses into chunks no longer than 15 seconds; very short inputs are padded to the engine's minimum feature shape. Chunk overrides above 15 seconds are rejected in TensorRT mode to prevent unbounded engine rebuilding. The decoder and timestamp handling reuse onnx-asr 0.12.0, which is pinned for this integration.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `PARAKEET_GPU_BACKEND` | `tensorrt` | `tensorrt` or `cuda` |
+| `PARAKEET_TRT_CACHE_DIR` | `models/tensorrt` | Persistent engine/timing cache |
+| `PARAKEET_TRT_WORKSPACE_MB` | `256` | TensorRT builder workspace; not a total VRAM cap |
+| `PARAKEET_CHUNK_MIN_SEC` / `TARGET_SEC` / `MAX_SEC` | `5` / `12` / `15` | TensorRT chunking; each variable has the `PARAKEET_CHUNK_` prefix |
+| `PARAKEET_BATCHED` | `false` | Optional request micro-batching; TensorRT encoder still runs batch 1 |
+| `PARAKEET_INFER_WORKERS` | `1` | TensorRT worker default |
+| `PARAKEET_GPU_MEMORY_LIMIT_MB` | `0` | CUDA arena limit only, not TensorRT or total process memory |
+
+CUDA uses heuristic cuDNN selection, bounded cuDNN workspace, and `same_as_requested` arena growth. `PARAKEET_MAX_BATCH_AUDIO_SECONDS=90` limits padded audio per optional CUDA batch. See [OPTIMIZATION.md](OPTIMIZATION.md) for the earlier optimization history and [DOCKER.md](DOCKER.md) for container deployment.
 
 ## ⚡ Lower-latency WAV uploads
 
@@ -84,8 +79,8 @@ Benchmarked on **LibriSpeech test-clean** dataset with professionally verified h
 > *Whisper Large v3 benchmarks from published literature on LibriSpeech test-clean. Actual results vary by implementation and hardware.
 
 **Key Findings:**
-- All Parakeet precision variants achieve **identical accuracy** (97.84%)
-- INT8 quantization has **zero accuracy loss** vs FP32
+- The three variants produced the same score on this historical 50-sample test (97.84%)
+- This historical sample showed no measured INT8 accuracy loss versus FP32; this is not a general guarantee
 - Real-time factor (RTF) of ~0.05 means 20x faster than real-time
 - Competitive with Whisper Large v3 accuracy with significantly faster CPU inference
 
@@ -223,11 +218,11 @@ The API supports multiple model variants with different precision levels:
 
 | Model Name | Precision | Speed | Description |
 |------------|-----------|-------|-------------|
-| `parakeet-tdt-0.6b-v3` | INT8 | Fastest | Default model with 8-bit quantization (recommended) |
-| `istupakov/parakeet-tdt-0.6b-v3-onnx` | FP32 | Slower | Full precision for maximum accuracy |
+| `parakeet-tdt-0.6b-v3` | INT8 | CPU profile | Explicit CPU-oriented model |
+| `istupakov/parakeet-tdt-0.6b-v3-onnx` | FP32 weights | GPU default | TensorRT FP16 encoder, CUDA FP32 decoder; CUDA fallback |
 | `grikdotnet/parakeet-tdt-0.6b-fp16` | FP16 | Medium | Half precision, balanced speed and accuracy |
 
-Models are lazy-loaded on first use and cached for subsequent requests. The default INT8 model is pre-loaded at startup.
+Models are lazy-loaded on first use and cached for subsequent requests. The configured default model is pre-loaded at startup (TensorRT GPU profile by default).
 
 **To select a model via API:**
 ```python
@@ -274,7 +269,7 @@ The web interface includes a dropdown menu to select between INT8, FP16, and FP3
 
 ## Model details
 
-When running the application, the ONNX models are automatically loaded from the `models/` directory. The primary model used is the **Parakeet TDT 0.6B v3** converted to ONNX with INT8 quantization, providing the optimal balance of speed and accuracy for multilingual speech recognition across 25 European languages.
+When running the application, the ONNX models are automatically loaded from the `models/` directory. The GPU default compiles the FP32 **Parakeet TDT 0.6B v3** ONNX encoder with TensorRT FP16 and keeps the decoder in CUDA FP32. INT8 remains available for CPU use.
 
 ## 🙏 Acknowledgments
 

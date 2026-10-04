@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import threading
+import gc
 from typing import Any, Dict, List, Tuple
 
 # Import config before ONNX Runtime so thread-pool environment limits are active.
 from .config import (
     DEFAULT_MODEL,
+    GPU_BACKEND,
+    GPU_ARENA_EXTEND_STRATEGY,
+    GPU_CUDNN_ALGO_SEARCH,
+    GPU_CUDNN_MAX_WORKSPACE,
     GPU_DEVICE_ID,
+    GPU_MEMORY_LIMIT_MB,
     MODEL_CONFIGS,
     ORT_INTER_THREADS,
     ORT_INTRA_THREADS,
@@ -22,6 +28,7 @@ _ModelKey = Tuple[str, bool]
 _MODELS: Dict[_ModelKey, object] = {}
 _MODEL_LOCK = threading.RLock()
 _CUDA_PRELOADED = False
+_RUNTIMES: Dict[str, dict] = {}
 
 
 def _preload_cuda_libraries() -> bool:
@@ -81,15 +88,19 @@ def _resolve_providers() -> List[Any]:
     if USE_GPU == "false" or not has_cuda:
         return ["CPUExecutionProvider"]
 
-    cuda = (
-        "CUDAExecutionProvider",
-        {
-            "device_id": GPU_DEVICE_ID,
-            "cudnn_conv_algo_search": "EXHAUSTIVE",
-            "cudnn_conv_use_max_workspace": "1",
-            "do_copy_in_default_stream": "1",
-        },
-    )
+    cuda_options = {
+        "device_id": GPU_DEVICE_ID,
+        "arena_extend_strategy": {
+            "next_power_of_two": "kNextPowerOfTwo",
+            "same_as_requested": "kSameAsRequested",
+        }[GPU_ARENA_EXTEND_STRATEGY],
+        "cudnn_conv_algo_search": GPU_CUDNN_ALGO_SEARCH.upper(),
+        "cudnn_conv_use_max_workspace": "1" if GPU_CUDNN_MAX_WORKSPACE else "0",
+        "do_copy_in_default_stream": "1",
+    }
+    if GPU_MEMORY_LIMIT_MB:
+        cuda_options["gpu_mem_limit"] = GPU_MEMORY_LIMIT_MB * 1024 * 1024
+    cuda = ("CUDAExecutionProvider", cuda_options)
     return [cuda] if USE_GPU == "true" else [cuda, "CPUExecutionProvider"]
 
 
@@ -149,15 +160,37 @@ def load_model(name: str = DEFAULT_MODEL, *, with_timestamps: bool = True):
             ORT_INTRA_THREADS,
             ORT_INTER_THREADS,
         )
-        model = onnx_asr.load_model(
-            config["hf_id"],
-            quantization=config["quantization"],
-            providers=providers,
-            sess_options=session_options,
-        )
+        model = None
+        fallback_reason = None
+        has_cuda = any((item[0] if isinstance(item, tuple) else item) == "CUDAExecutionProvider" for item in providers)
+        if GPU_BACKEND == "tensorrt" and has_cuda and config["quantization"] is None:
+            try:
+                from .tensorrt_backend import load_tensorrt_model
+                model = load_tensorrt_model(config["hf_id"], session_options, providers)
+            except Exception as exc:
+                fallback_reason = str(exc)
+                logger.warning("TensorRT unavailable for %s; using CUDA FP32: %s", normalized, exc)
+            # Release a failed builder/session before allocating a CUDA encoder.
+            if model is None:
+                gc.collect()
+        if model is None:
+            model = onnx_asr.load_model(
+                config["hf_id"],
+                quantization=config["quantization"],
+                providers=providers,
+                sess_options=session_options,
+            )
         if with_timestamps:
             model = model.with_timestamps()
         _validate_gpu_binding(normalized, model)
+        report = _session_provider_report(model)
+        is_trt = any(names and names[0] == "TensorrtExecutionProvider" for names in report.values())
+        _RUNTIMES[normalized] = {
+            "backend": "tensorrt" if is_trt else ("cuda" if has_cuda else "cpu"),
+            "encoder_precision": "mixed-fp16" if is_trt else (config["quantization"] or "fp32"),
+            "sessions": report,
+            "fallback_reason": fallback_reason,
+        }
         _MODELS[key] = model
         logger.info("Loaded %s", normalized)
         return model
@@ -170,3 +203,8 @@ def get_model(name: str = DEFAULT_MODEL):
 def loaded_models() -> List[str]:
     with _MODEL_LOCK:
         return sorted({name for name, _timestamps in _MODELS})
+
+
+def runtime_status() -> Dict[str, dict]:
+    with _MODEL_LOCK:
+        return dict(_RUNTIMES)

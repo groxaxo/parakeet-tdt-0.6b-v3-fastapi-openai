@@ -8,6 +8,7 @@ models/
 server.log
 benchmark_results/
 venv/
+.venv*/
 .env
 .idea/
 .vscode/

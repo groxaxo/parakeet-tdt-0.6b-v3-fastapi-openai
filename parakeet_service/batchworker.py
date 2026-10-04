@@ -11,7 +11,9 @@ from .config import (
     BATCHED,
     BATCH_WINDOW_MS,
     INFER_WORKERS,
+    MAX_BATCH_AUDIO_SECONDS,
     MAX_BATCH_SIZE,
+    TARGET_SR,
     logger,
 )
 
@@ -84,10 +86,12 @@ class BatchWorker:
         get_model_fn,
         *,
         max_batch: int = MAX_BATCH_SIZE,
+        max_batch_audio_seconds: float = MAX_BATCH_AUDIO_SECONDS,
         window_ms: float = BATCH_WINDOW_MS,
     ):
         self._get_model = get_model_fn
         self._max_batch = max(1, max_batch)
+        self._max_batch_samples = max(1, int(max_batch_audio_seconds * TARGET_SR))
         self._window_s = max(0.0, window_ms) / 1000.0
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._task: Optional[asyncio.Task[None]] = None
@@ -99,8 +103,9 @@ class BatchWorker:
             self._accepting = True
             self._task = asyncio.create_task(self._run(), name="batch_worker")
             logger.info(
-                "BatchWorker started (max_batch=%d window=%.1fms)",
+                "BatchWorker started (max_batch=%d max_padded_audio=%.1fs window=%.1fms)",
                 self._max_batch,
+                self._max_batch_samples / TARGET_SR,
                 self._window_s * 1000,
             )
 
@@ -167,6 +172,16 @@ class BatchWorker:
                     except asyncio.TimeoutError:
                         break
                     if candidate.model_name != first.model_name:
+                        carry = candidate
+                        break
+                    # ORT pads a batch to its longest waveform, so GPU activation
+                    # memory scales approximately with batch_size * max_length.
+                    # Keep short requests batched while automatically serializing
+                    # long requests before they inflate the CUDA arena.
+                    padded_samples = (len(batch) + 1) * max(
+                        max(job.wav.size for job in batch), candidate.wav.size
+                    )
+                    if padded_samples > self._max_batch_samples:
                         carry = candidate
                         break
                     batch.append(candidate)

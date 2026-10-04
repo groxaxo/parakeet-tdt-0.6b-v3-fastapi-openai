@@ -26,7 +26,7 @@ from .config import (
     UPLOAD_READ_CHUNK_BYTES,
     logger,
 )
-from .model import loaded_models
+from .model import loaded_models, runtime_status
 
 router = APIRouter()
 _ALLOWED_FORMATS = {"json", "text", "srt", "vtt", "verbose_json"}
@@ -256,6 +256,7 @@ def health(request: Request):
         "models": list(MODEL_CONFIGS.keys()),
         "loaded": loaded_models(),
         "default_model": DEFAULT_MODEL,
+        "runtime": runtime_status(),
         "cpu": CPU_INFO,
     }
 

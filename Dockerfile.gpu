@@ -48,7 +48,9 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV PARAKEET_USE_GPU=true
 ENV PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx
-ENV PARAKEET_BATCHED=1
+ENV PARAKEET_GPU_BACKEND=tensorrt
+ENV PARAKEET_BATCHED=0
+ENV PARAKEET_INFER_WORKERS=1
 ENV PARAKEET_MAX_BATCH_SIZE=4
 ENV PARAKEET_BATCH_WINDOW_MS=4
 ENV PARAKEET_ORT_INTRA_THREADS=1
@@ -56,7 +58,7 @@ ENV PARAKEET_AUDIO_WORKERS=8
 
 EXPOSE 5092
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5092/healthz')" || exit 1
 
 CMD ["python", "server.py"]

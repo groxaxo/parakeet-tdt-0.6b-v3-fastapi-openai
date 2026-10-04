@@ -95,10 +95,18 @@ MODEL_CONFIGS = {
         "description": "FP16 GPU profile",
     },
 }
+# TensorRT compiles the FP32 ONNX encoder to mixed FP16; decoder stays FP32.
 GPU_DEFAULT_MODEL = "istupakov/parakeet-tdt-0.6b-v3-onnx"
 CPU_DEFAULT_MODEL = "parakeet-tdt-0.6b-v3"
 
 USE_GPU = _env_choice("PARAKEET_USE_GPU", "true", {"auto", "true", "false"})
+GPU_BACKEND = _env_choice("PARAKEET_GPU_BACKEND", "tensorrt", {"tensorrt", "cuda"})
+TRT_ENABLED = USE_GPU != "false" and GPU_BACKEND == "tensorrt"
+TRT_CACHE_DIR = Path(os.getenv("PARAKEET_TRT_CACHE_DIR", MODELS_DIR / "tensorrt")).expanduser()
+TRT_WORKSPACE_MB = _env_int("PARAKEET_TRT_WORKSPACE_MB", 256)
+# Fixed batch-1 profile: 80 ms minimum, 8 s optimal, 16 s maximum. Keep a
+# one-second margin for the preprocessor's extra frame at waveform boundaries.
+TRT_MAX_FRAMES = 1600
 _default_model_fallback = CPU_DEFAULT_MODEL if USE_GPU == "false" else GPU_DEFAULT_MODEL
 DEFAULT_MODEL = os.getenv("PARAKEET_DEFAULT_MODEL", _default_model_fallback).strip().lower()
 if DEFAULT_MODEL not in MODEL_CONFIGS:
@@ -113,9 +121,11 @@ if DEFAULT_MODEL not in MODEL_CONFIGS:
 # ---------------------------------------------------------------------------
 TARGET_SR = 16_000
 
-CHUNK_TARGET_SEC = _env_float("PARAKEET_CHUNK_TARGET_SEC", 60.0, minimum=0.1)
-CHUNK_MAX_SEC = _env_float("PARAKEET_CHUNK_MAX_SEC", 75.0, minimum=0.1)
-CHUNK_MIN_SEC = _env_float("PARAKEET_CHUNK_MIN_SEC", 20.0, minimum=0.0)
+CHUNK_TARGET_SEC = _env_float("PARAKEET_CHUNK_TARGET_SEC", 12.0 if TRT_ENABLED else 60.0, minimum=0.1)
+CHUNK_MAX_SEC = _env_float("PARAKEET_CHUNK_MAX_SEC", 15.0 if TRT_ENABLED else 75.0, minimum=0.1)
+CHUNK_MIN_SEC = _env_float("PARAKEET_CHUNK_MIN_SEC", 5.0 if TRT_ENABLED else 20.0, minimum=0.0)
+if TRT_ENABLED and CHUNK_MAX_SEC > 15.0:
+    raise RuntimeError("TensorRT requires PARAKEET_CHUNK_MAX_SEC <= 15; use PARAKEET_GPU_BACKEND=cuda for larger chunks")
 if not CHUNK_MIN_SEC <= CHUNK_TARGET_SEC <= CHUNK_MAX_SEC:
     raise RuntimeError(
         "chunk durations must satisfy PARAKEET_CHUNK_MIN_SEC <= "
@@ -129,10 +139,25 @@ VAD_MIN_SILENCE_MS = _env_int("PARAKEET_VAD_MIN_SILENCE_MS", 400, minimum=1)
 VAD_SPEECH_PAD_MS = _env_int("PARAKEET_VAD_SPEECH_PAD_MS", 120, minimum=0)
 
 GPU_DEVICE_ID = _env_int("PARAKEET_GPU_DEVICE_ID", 0, minimum=0)
-BATCHED = _env_bool("PARAKEET_BATCHED", USE_GPU != "false")
+GPU_MEMORY_LIMIT_MB = _env_int("PARAKEET_GPU_MEMORY_LIMIT_MB", 0, minimum=0)
+GPU_CUDNN_ALGO_SEARCH = _env_choice(
+    "PARAKEET_GPU_CUDNN_ALGO_SEARCH",
+    "heuristic",
+    {"default", "heuristic", "exhaustive"},
+)
+GPU_CUDNN_MAX_WORKSPACE = _env_bool("PARAKEET_GPU_CUDNN_MAX_WORKSPACE", False)
+GPU_ARENA_EXTEND_STRATEGY = _env_choice(
+    "PARAKEET_GPU_ARENA_EXTEND_STRATEGY",
+    "same_as_requested",
+    {"next_power_of_two", "same_as_requested"},
+)
+BATCHED = _env_bool("PARAKEET_BATCHED", USE_GPU != "false" and not TRT_ENABLED)
 MAX_BATCH_SIZE = _env_int("PARAKEET_MAX_BATCH_SIZE", 4)
+MAX_BATCH_AUDIO_SECONDS = _env_float(
+    "PARAKEET_MAX_BATCH_AUDIO_SECONDS", 90.0, minimum=0.1
+)
 BATCH_WINDOW_MS = _env_float("PARAKEET_BATCH_WINDOW_MS", 4.0, minimum=0.0)
-INFER_WORKERS = _env_int("PARAKEET_INFER_WORKERS", 4)
+INFER_WORKERS = _env_int("PARAKEET_INFER_WORKERS", 1 if TRT_ENABLED else 4)
 
 MAX_UPLOAD_BYTES = _env_int(
     "PARAKEET_MAX_UPLOAD_BYTES", 256 * 1024 * 1024, minimum=1
@@ -142,7 +167,7 @@ MAX_BATCH_BYTES = _env_int(
     "PARAKEET_MAX_BATCH_BYTES", 512 * 1024 * 1024, minimum=1
 )
 MAX_AUDIO_SECONDS = _env_float("PARAKEET_MAX_AUDIO_SECONDS", 2 * 60 * 60, minimum=1.0)
-MAX_REQUEST_CHUNKS = _env_int("PARAKEET_MAX_REQUEST_CHUNKS", 512)
+MAX_REQUEST_CHUNKS = _env_int("PARAKEET_MAX_REQUEST_CHUNKS", 1024 if TRT_ENABLED else 512)
 FFMPEG_TIMEOUT_SEC = _env_float("PARAKEET_FFMPEG_TIMEOUT_SEC", 180.0, minimum=1.0)
 UPLOAD_READ_CHUNK_BYTES = min(1024 * 1024, MAX_UPLOAD_BYTES)
 

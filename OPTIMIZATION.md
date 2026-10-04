@@ -1,6 +1,8 @@
 # Optimization Report: `parakeet-tdt-0.6b-v3-fastapi-openai`
 
-## TL;DR
+The current default is TensorRT FP16 encoder + CUDA FP32 decoder. See [README.md](README.md) and [the TensorRT trial](docs/tensorrt-trial.md). The tables and defaults below record the earlier CUDA/CPU profile and are retained as historical evidence.
+
+## Historical CUDA/CPU optimization report
 
 Replaced the legacy Flask + Waitress + `ffmpeg-silencedetect` design with a
 new FastAPI service inspired by `parakeet-flash`. On a single i7-12700KF
@@ -29,9 +31,10 @@ now the best stable RTX 3090 profile: FP32 + GPU micro-batching.
 | **300 s file (single)** | 10.41 s / 27.2×    | **1.37 s / 205.9×** | **+7.6×** |
 | 16× 10 s concurrent     | 39.3× throughput   | **200.3× throughput** | **+5.1×** |
 
-Default GPU command:
+Historical CUDA benchmark command (explicit backend override):
 
 ```bash
+PARAKEET_GPU_BACKEND=cuda \
 PARAKEET_USE_GPU=true \
 PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
 PARAKEET_BATCHED=1 \
@@ -164,6 +167,10 @@ All optional. Defaults are tuned for an 8-core CPU.
 | `PARAKEET_BATCHED`         | `1`          | `1` → use GPU-friendly `BatchWorker`; set `0` for CPU INT8 |
 | `PARAKEET_USE_GPU`         | `true`       | `true` / `auto` / `false`                                |
 | `PARAKEET_GPU_DEVICE_ID`   | `0`          | CUDA device for ORT                                      |
+| `PARAKEET_GPU_MEMORY_LIMIT_MB` | `0`      | CUDA arena limit in MiB (`0` means unlimited)            |
+| `PARAKEET_GPU_CUDNN_ALGO_SEARCH` | `heuristic` | cuDNN convolution search: default/heuristic/exhaustive |
+| `PARAKEET_GPU_CUDNN_MAX_WORKSPACE` | `false` | allow maximum cuDNN convolution workspace             |
+| `PARAKEET_GPU_ARENA_EXTEND_STRATEGY` | `same_as_requested` | grow CUDA arena exactly as needed; `next_power_of_two` may be faster but uses more VRAM |
 | `PARAKEET_CHUNK_TARGET_SEC`| `60`         | preferred chunk length                                   |
 | `PARAKEET_CHUNK_MAX_SEC`   | `75`         | hard cap before force-cut; ≤ this skips chunking         |
 | `PARAKEET_CHUNK_MIN_SEC`   | `20`         | min chunk length before merge                            |
@@ -171,6 +178,7 @@ All optional. Defaults are tuned for an 8-core CPU.
 | `PARAKEET_VAD_MIN_SILENCE_MS` | `400`     | min silence between chunks                               |
 | `PARAKEET_VAD_SPEECH_PAD_MS` | `120`      | pad around speech segments                               |
 | `PARAKEET_MAX_BATCH_SIZE`  | `4`          | max batch (only used when `PARAKEET_BATCHED=1`)          |
+| `PARAKEET_MAX_BATCH_AUDIO_SECONDS` | `90` | max padded audio seconds per GPU batch; lowers effective batch size for long clips |
 | `PARAKEET_BATCH_WINDOW_MS` | `4`          | batch collection window                                  |
 | `PARAKEET_ORT_INTRA_THREADS` | `1` for GPU, physical cores for CPU override | ORT intra-op threads |
 | `PARAKEET_ORT_INTER_THREADS` | `1`        | ORT inter-op threads                                     |
@@ -193,6 +201,7 @@ python server.py
 ./pin_pcores.sh python server.py
 
 # Default RTX 3090 profile
+PARAKEET_GPU_BACKEND=cuda \
 PARAKEET_USE_GPU=true \
 PARAKEET_DEFAULT_MODEL=istupakov/parakeet-tdt-0.6b-v3-onnx \
 PARAKEET_BATCHED=1 \

@@ -11,7 +11,9 @@ services:
     environment:
       PARAKEET_USE_GPU: "true"
       PARAKEET_DEFAULT_MODEL: istupakov/parakeet-tdt-0.6b-v3-onnx
-      PARAKEET_BATCHED: "1"
+      PARAKEET_GPU_BACKEND: tensorrt
+      PARAKEET_BATCHED: "0"
+      PARAKEET_INFER_WORKERS: "1"
       PARAKEET_MAX_BATCH_SIZE: "4"
       PARAKEET_BATCH_WINDOW_MS: "4"
       PARAKEET_ORT_INTRA_THREADS: "1"
@@ -33,7 +35,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 600s
 
   # CPU-only deployment (explicit profile)
   parakeet-cpu:
