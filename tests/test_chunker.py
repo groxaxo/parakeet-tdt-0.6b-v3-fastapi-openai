@@ -53,3 +53,14 @@ def test_slice_chunks_returns_views():
     assert len(pieces) == 2
     assert np.shares_memory(waveform, pieces[0])
     assert pieces[0].flags.c_contiguous
+
+
+def test_vad_boundaries_do_not_trim_quiet_first_or_last_words(monkeypatch):
+    total = int(chunker.CHUNK_MAX_SEC * 3 * chunker.TARGET_SR)
+    margin = chunker.TARGET_SR
+    monkeypatch.setattr(chunker, "_silero_speech_segments", lambda _wav: [(margin, total - margin)])
+    ranges = chunker.auto_chunk(np.ones(total, dtype=np.float32))
+    _assert_valid(ranges, total, int(chunker.CHUNK_MAX_SEC * chunker.TARGET_SR))
+    assert ranges[0][0] == 0
+    assert ranges[-1][1] == total
+    assert all(left[1] == right[0] for left, right in zip(ranges, ranges[1:]))

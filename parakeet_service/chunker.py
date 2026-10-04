@@ -157,7 +157,9 @@ def auto_chunk(wav: np.ndarray) -> List[Range]:
         return []
 
     packed: List[Range] = []
-    current_start, current_end = segments[0]
+    # VAD chooses split points, not which boundary words to discard. In
+    # particular the energy fallback may miss a quiet first/last syllable.
+    current_start, current_end = 0, segments[0][1]
     for start, end in segments[1:]:
         if end - current_start <= target:
             current_end = end
@@ -172,8 +174,8 @@ def auto_chunk(wav: np.ndarray) -> List[Range]:
         else:
             current_end = end
 
-    if current_end > current_start:
-        packed.append((current_start, current_end))
+    if total > current_start:
+        packed.append((current_start, total))
 
     output: List[Range] = []
     for start, end in packed:

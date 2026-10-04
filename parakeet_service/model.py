@@ -185,8 +185,12 @@ def load_model(name: str = DEFAULT_MODEL, *, with_timestamps: bool = True):
         _validate_gpu_binding(normalized, model)
         report = _session_provider_report(model)
         is_trt = any(names and names[0] == "TensorrtExecutionProvider" for names in report.values())
+        is_cuda = any(names and names[0] == "CUDAExecutionProvider" for names in report.values())
+        backend = "tensorrt" if is_trt else ("cuda" if is_cuda else ("cpu" if report else "unknown"))
+        if has_cuda and backend == "cpu" and fallback_reason is None:
+            fallback_reason = "ONNX Runtime selected CPU instead of CUDA"
         _RUNTIMES[normalized] = {
-            "backend": "tensorrt" if is_trt else ("cuda" if has_cuda else "cpu"),
+            "backend": backend,
             "encoder_precision": "mixed-fp16" if is_trt else (config["quantization"] or "fp32"),
             "sessions": report,
             "fallback_reason": fallback_reason,

@@ -87,3 +87,21 @@ def test_failed_trt_load_uses_cuda_and_reports_reason(monkeypatch):
     assert calls[0]["quantization"] is None
     assert model.runtime_status()[name]["backend"] == "cuda"
     assert model.runtime_status()[name]["fallback_reason"] == "TensorRT library absent"
+
+
+def test_auto_cpu_fallback_reports_actual_cpu_backend(monkeypatch):
+    monkeypatch.setattr(model, "_MODELS", {})
+    monkeypatch.setattr(model, "_RUNTIMES", {})
+    monkeypatch.setattr(model, "GPU_BACKEND", "cuda")
+    monkeypatch.setattr(model, "USE_GPU", "auto")
+    monkeypatch.setattr(model, "_resolve_providers", lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr(model, "_build_sess_options", lambda: None)
+    class Model:
+        _encoder = Encoder("CPUExecutionProvider")
+        def with_timestamps(self): return self
+    monkeypatch.setattr(model.onnx_asr, "load_model", lambda *args, **kwargs: Model())
+    name = "istupakov/parakeet-tdt-0.6b-v3-onnx"
+    model.load_model(name)
+    status = model.runtime_status()[name]
+    assert status["backend"] == "cpu"
+    assert status["fallback_reason"] == "ONNX Runtime selected CPU instead of CUDA"
