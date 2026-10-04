@@ -149,16 +149,16 @@ For hybrid CPUs (like Intel 12th-14th Gen), performance is still improved by pin
 
 The easiest way to get started. No dependencies to install!
 
-**CPU Deployment:**
+**GPU Deployment (default; requires NVIDIA Container Toolkit):**
 ```bash
 git clone https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai
 cd parakeet-tdt-0.6b-v3-fastapi-openai
-docker compose up parakeet-cpu -d
+docker compose up parakeet-gpu -d
 ```
 
-**GPU Deployment** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
+**CPU alternative** (no NVIDIA GPU required):
 ```bash
-docker compose up parakeet-gpu -d
+docker compose up parakeet-cpu -d
 ```
 
 The server will be available at `http://localhost:5092`. See [DOCKER.md](DOCKER.md) for more options.
@@ -185,7 +185,7 @@ Parakeet TDT provides an OpenAI-compatible API server.
 
 ```bash
 conda activate parakeet-onnx
-python app.py
+python server.py
 ```
 *   **Port**: 5092
 *   **Docs**: [http://127.0.0.1:5092/docs](http://127.0.0.1:5092/docs)
@@ -204,7 +204,7 @@ client = OpenAI(
 
 audio_file = open("audio.mp3", "rb")
 transcript = client.audio.transcriptions.create(
-  model="parakeet-tdt-0.6b-v3",  # or "istupakov/parakeet-tdt-0.6b-v3-onnx" or "grikdotnet/parakeet-tdt-0.6b-fp16"
+  model="istupakov/parakeet-tdt-0.6b-v3-onnx",  # TensorRT GPU default
   file=audio_file,
   response_format="text"
 )
@@ -238,7 +238,7 @@ transcript = client.audio.transcriptions.create(
 The server includes a built-in web interface for testing and easy drag-and-drop transcription.
 Access it at: **[http://127.0.0.1:5092](http://127.0.0.1:5092)**
 
-The web interface includes a dropdown menu to select between INT8, FP16, and FP32 model variants.
+The legacy `app.py` web interface includes a precision dropdown; it does not use the optimized TensorRT backend. Use `server.py` and its API for the current default.
 
 ## 🔌 Open WebUI Integration
 
@@ -249,7 +249,7 @@ The web interface includes a dropdown menu to select between INT8, FP16, and FP3
 1.  **Start the Parakeet Server** (if not already running):
     ```bash
     conda activate parakeet-onnx
-    python app.py
+    python server.py
     ```
     The server will be available at `http://127.0.0.1:5092`
 
@@ -258,7 +258,7 @@ The web interface includes a dropdown menu to select between INT8, FP16, and FP3
     - Set **STT Engine** to `OpenAI`
     - Set **OpenAI Base URL** to `http://127.0.0.1:5092/v1`
     - Set **OpenAI API Key** to `sk-no-key-required`
-    - Set **STT Model** to `parakeet-tdt-0.6b-v3`
+    - Set **STT Model** to `istupakov/parakeet-tdt-0.6b-v3-onnx`
     - Click **Save**
 
 3.  **Start Using Voice!**

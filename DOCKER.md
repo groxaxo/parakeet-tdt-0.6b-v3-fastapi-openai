@@ -84,7 +84,7 @@ curl http://localhost:5092/health
 # Transcribe audio (OpenAI-compatible)
 curl -X POST http://localhost:5092/v1/audio/transcriptions \
     -F "file=@audio.mp3" \
-    -F "model=parakeet-tdt-0.6b-v3"
+    -F "model=istupakov/parakeet-tdt-0.6b-v3-onnx"
 ```
 
 ## Troubleshooting
