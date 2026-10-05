@@ -101,6 +101,7 @@ CPU_DEFAULT_MODEL = "parakeet-tdt-0.6b-v3"
 
 USE_GPU = _env_choice("PARAKEET_USE_GPU", "true", {"auto", "true", "false"})
 GPU_BACKEND = _env_choice("PARAKEET_GPU_BACKEND", "tensorrt", {"tensorrt", "cuda"})
+GPU_DECODER_STATE = _env_bool("PARAKEET_GPU_DECODER_STATE", False)
 TRT_ENABLED = USE_GPU != "false" and GPU_BACKEND == "tensorrt"
 TRT_CACHE_DIR = Path(os.getenv("PARAKEET_TRT_CACHE_DIR", MODELS_DIR / "tensorrt")).expanduser()
 TRT_WORKSPACE_MB = _env_int("PARAKEET_TRT_WORKSPACE_MB", 256)
