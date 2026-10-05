@@ -14,6 +14,7 @@ from .config import (
     GPU_CUDNN_MAX_WORKSPACE,
     GPU_DEVICE_ID,
     GPU_MEMORY_LIMIT_MB,
+    INFER_WORKERS,
     MODEL_CONFIGS,
     ORT_INTER_THREADS,
     ORT_INTRA_THREADS,
@@ -194,6 +195,8 @@ def load_model(name: str = DEFAULT_MODEL, *, with_timestamps: bool = True):
             "encoder_precision": "mixed-fp16" if is_trt else (config["quantization"] or "fp32"),
             "sessions": report,
             "fallback_reason": fallback_reason,
+            "decoder_state": "gpu" if getattr(getattr(model, "asr", model), "gpu_decoder_state", False) else "host",
+            "inference_workers": INFER_WORKERS,
         }
         _MODELS[key] = model
         logger.info("Loaded %s", normalized)
